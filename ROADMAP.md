@@ -1,4 +1,4 @@
-# Signal-Collab — positioning, invariants, roadmap
+# Cardrack — positioning, invariants, roadmap
 
 ## Positioning
 

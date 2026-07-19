@@ -18,7 +18,7 @@ import type { Pool, KV, Hooks, DocState } from './types';
 export const KIND_PREKEYS = 30078;
 export const KIND_SELFSNAP = 30079;
 export const KIND_ENVELOPE = 4078;
-export const DTAG = 'signal-collab-prekeys-v1';
+export const DTAG = 'cardrack-prekeys-v1';
 export const DTAG_SNAP = 'sc-docs-v1';
 export const ADDR_WINDOW = 16;
 export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];

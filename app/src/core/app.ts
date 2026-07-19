@@ -88,6 +88,7 @@ export class CollabCore {
   }
 
   npub() { return nip19.npubEncode(this.pk); }
+  npubOf(pk: string) { return nip19.npubEncode(pk); }
   private ns(k: string) { return k + '.' + this.pk.slice(0, 12); }
 
   private async boot() {

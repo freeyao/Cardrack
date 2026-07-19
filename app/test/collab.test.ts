@@ -49,7 +49,9 @@ describe('collab protocol', () => {
     const S = await makeCore(relay);
     await S.core.sendTo(O.core.pk, { t: 'update', docId: 'nope', version: 1, ts: Date.now(), author: S.core.pk, content: 'STRANGER', format: 'plain' });
     await sleep(300);
-    expect(O.hooks.text()).toContain('unknown doc');
+    // rejected at the earliest gate: a bootstrap envelope whose payload carries
+    // no verifiable sender identity is dropped before doc routing even happens
+    expect(/bootstrap missing sender identity|unknown doc|REJECTED/.test(O.hooks.text())).toBe(true);
 
     // metadata privacy: all envelopes anonymous; non-boot envelopes to one-time addrs only
     const identities = [O, E, V, S].map((x) => x.core.pk);

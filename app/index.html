@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Signal-Collab — E2EE document collaboration</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2129; --panel2:#212a34; --border:#2d3843;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#4f9cf9; --ok:#3fb950;
+    --warn:#d29922; --wire:#bc8cff; --danger:#f85149;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin-bottom:2px}
+  h3{font-size:16px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:10px}
+  .idbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:13px}
+  .idbar .npub{font-family:ui-monospace,Menlo,monospace;color:var(--accent);word-break:break-all;cursor:pointer}
+  .pkstat{color:var(--muted)}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
+  .controls label{color:var(--muted)}
+  select,input[type=text]{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:14px}
+  input.wide{flex:1;min-width:180px}
+  button.primary{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  button.primary:disabled{opacity:.5;cursor:default}
+  button.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer}
+  .doclist{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+  .docitem{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer}
+  .docitem:hover{border-color:var(--accent)}
+  .docitem .t{font-weight:600;flex:1}
+  .docitem .meta{color:var(--muted);font-size:12px}
+  .pane{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px}
+  .pane.readonly{opacity:.75}
+  .pane-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .pane-title{font-weight:700;flex:1}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;background:#1f3d2b;color:var(--ok)}
+  .badge.viewer{background:#3d321f;color:var(--warn)}
+  .badge.v{background:var(--panel2);color:var(--muted)}
+  .toolbar{display:flex;gap:6px;margin-bottom:8px}
+  .toolbar button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px}
+  .rich-btns{display:inline-flex;gap:6px}
+  .editor-plain,.editor-rich{width:100%;min-height:180px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:15px;resize:vertical}
+  .editor-rich{overflow-y:auto}
+  .editor-rich:focus,.editor-plain:focus{outline:1px solid var(--accent)}
+  .members{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px}
+  .members .m{display:flex;gap:8px;align-items:center;padding:3px 0;font-family:ui-monospace,Menlo,monospace}
+  .members .m .who{flex:1;word-break:break-all;color:var(--muted)}
+  .log{background:#0a0e12;border:1px solid var(--border);border-radius:10px;margin-top:12px;padding:10px;height:190px;overflow-y:auto;font:12px/1.7 ui-monospace,Menlo,Consolas,monospace}
+  .log-row{word-break:break-all}
+  .log-time{color:#55606b}
+  .log-kind{font-weight:700}
+  .log-row.info .log-kind{color:var(--muted)}
+  .log-row.ok .log-kind{color:var(--ok)}
+  .log-row.warn .log-kind{color:var(--warn)}
+  .log-row.wire .log-kind{color:var(--wire)}
+  .hint{color:var(--muted);font-size:13px;margin:10px 0}
+  .field{border:1px dashed var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:14px}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔐 Signal-Collab</h1>
+  <div class="sub">End-to-end encrypted document collaboration — Signal protocol over Nostr relays. Independent; no accounts on any server.</div>
+
+  <div id="acct-gate" class="hidden">
+    <div class="pane" style="max-width:560px;margin:20px auto">
+      <h3 style="margin-bottom:6px">Welcome</h3>
+      <p class="hint">Create a new account, or restore one with your 12-word recovery phrase. The phrase <b>is</b> your account — whoever holds it can be you. It never leaves this device unencrypted.</p>
+      <div id="acct-create-box"><button id="acct-create" class="primary">Create new account</button></div>
+      <div id="acct-mnemonic-box" class="hidden">
+        <div class="field" id="acct-mnemonic" style="line-height:1.9;user-select:all"></div>
+        <p class="hint">Write these 12 words on paper, in order.</p>
+        <label class="hint" style="display:block;margin:8px 0"><input type="checkbox" id="acct-saved"> I have written down my recovery phrase</label>
+        <button id="acct-continue" class="primary" disabled>Continue</button>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+      <textarea id="acct-restore-words" class="editor-plain" style="min-height:56px" placeholder="…or paste your 12 recovery words here to restore an existing account"></textarea>
+      <button id="acct-restore" class="ghost" style="margin-top:6px">Restore account</button>
+      <div class="hint" id="acct-err" style="color:var(--danger)"></div>
+    </div>
+  </div>
+
+  <div id="app-main" class="hidden">
+    <div class="idbar">
+      <span>me:</span><span class="npub" id="my-npub" title="click to copy">…</span>
+      <span class="pkstat" id="prekey-status">initializing…</span>
+      <span class="pkstat" id="show-mnemonic" style="cursor:pointer;display:none" title="reveal recovery phrase">🔑 phrase</span>
+    </div>
+    <div class="controls">
+      <input type="text" id="doc-title" class="wide" placeholder="new document title…">
+      <button id="doc-create" class="primary">Create document</button>
+    </div>
+    <div class="doclist" id="doc-list"></div>
+    <div id="doc-view" class="hidden">
+      <div class="controls">
+        <input type="text" id="invite-npub" class="wide" placeholder="collaborator npub…">
+        <label>role:</label>
+        <select id="invite-role"><option value="editor">editor</option><option value="viewer">viewer</option></select>
+        <button id="invite-send" class="primary">Invite</button>
+        <button id="doc-close" class="ghost">Back</button>
+      </div>
+      <div class="members" id="member-list"></div>
+      <div class="pane" id="pane-doc"></div>
+    </div>
+    <div class="log" id="collab-log"></div>
+    <p class="hint">Create a document → invite by npub (their signed prekey bundle is verified before the Signal handshake) → collaborate. Relays only ever see ciphertext between unlinkable one-time addresses.</p>
+  </div>
+</div>
+<script type="module" src="/src/ui/main.ts"></script>
+</body>
+</html>

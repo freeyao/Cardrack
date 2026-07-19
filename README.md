@@ -4,13 +4,7 @@ End-to-end encrypted document collaboration for small circles. An **independent*
 web app: the Signal protocol (X3DH + Double Ratchet) provides the crypto, Nostr
 relays are dumb transport, and any browser can run it. No accounts live on any server.
 
-> **The name.** In Poe's *The Purloined Letter*, the stolen letter is never
-> hidden — it hangs in plain sight in a pasteboard **card-rack** on the mantel,
-> turned inside out and re-sealed, so the police who dismantle the room miss it
-> entirely. That is exactly this app's privacy model: ciphertext is posted openly
-> on public relays, from throwaway keys to one-time addresses, visible to everyone
-> and legible to no one. Concealment by defeating the observer's assumptions, not
-> by hiding the object.
+> Named after the card-rack in Poe's *The Purloined Letter*.
 
 > Status: working proof of concept (v0.4), mid-refactor into a maintainable
 > TypeScript workspace. Not audited. Do not use for anything that actually needs

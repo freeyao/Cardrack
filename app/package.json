@@ -1,0 +1,20 @@
+{
+  "name": "signal-collab",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@privacyresearch/libsignal-protocol-typescript": "^0.0.16",
+    "nostr-tools": "^2.23.12"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.0.0",
+    "vitest": "^2.1.0"
+  }
+}

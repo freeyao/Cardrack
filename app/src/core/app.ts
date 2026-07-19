@@ -8,7 +8,7 @@ import {
 } from './signal';
 import { SignalProtocolStore } from './signal-store';
 import { Chain, deriveAddr, newChain } from './chains';
-import { applyRemote, localEdit } from './lww';
+import { applyRemote, cmp, localEdit } from './lww';
 import {
   generateMnemonic, validateMnemonic, skFromMnemonic, pkFromSk, selfEncrypt, selfDecrypt,
 } from './account';
@@ -31,6 +31,8 @@ export interface CoreOpts {
   hooks: Hooks;
   sanitize?: (html: string) => string;
   relays?: string[];
+  /** Anti-entropy sync interval (ms). 0 disables the timer (tests drive syncAllPeers manually). */
+  syncIntervalMs?: number;
 }
 
 export class CollabCore {
@@ -51,11 +53,21 @@ export class CollabCore {
   identityBundle: any = null;
   healAttempts: Record<string, number> = {};
   snapTimer: any = null;
+  syncTimer: any = null;
+  syncIntervalMs: number;
 
   constructor(o: CoreOpts) {
     this.pool = o.pool; this.storage = o.storage; this.hooks = o.hooks;
     this.relays = o.relays || DEFAULT_RELAYS;
     this.sanitize = o.sanitize || ((h) => h);
+    this.syncIntervalMs = o.syncIntervalMs ?? 20000;
+  }
+
+  /** Stop background timers (call on teardown / account switch). */
+  stop() {
+    if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null; }
+    if (this.snapTimer) { clearTimeout(this.snapTimer); this.snapTimer = null; }
+    if (this.chainSub) { try { this.chainSub.close(); } catch {} this.chainSub = null; }
   }
 
   /* ---------- account lifecycle ---------- */
@@ -108,6 +120,12 @@ export class CollabCore {
     this.resubscribeChains();
     if (this.restoring) await this.restoreFromSnapshot();
     this.muteSnap = false;
+    // Anti-entropy: reconcile now (catch up on anything missed while offline),
+    // then on a timer. Disabled when syncIntervalMs is 0 (tests drive it manually).
+    void this.syncAllPeers();
+    if (this.syncIntervalMs > 0) {
+      this.syncTimer = setInterval(() => { void this.syncAllPeers(); }, this.syncIntervalMs);
+    }
     this.hooks.docsChanged();
     this.hooks.status('listening');
     this.hooks.log('info', `Listening for invites to ${short(this.npub(), 20)} + ${Object.keys(this.chains).length * ADDR_WINDOW} one-time addresses`);
@@ -293,11 +311,69 @@ export class CollabCore {
     try { await this.sendTo(peerPk, { t: 'hello' }); } catch (e: any) { this.hooks.log('warn', 're-handshake failed: ' + e.message); }
   }
 
+  /* ---------- anti-entropy sync ----------
+   * Relays are best-effort: an update can be dropped or missed while offline.
+   * LWW only needs the *latest* state to converge, so peers periodically
+   * exchange a small version digest and re-push whichever side is behind.
+   * This makes documents self-heal after arbitrary message loss without
+   * persisted relay cursors. */
+
+  /** True if I may push updates for `doc` to `peerPk` (owner→member, editor→owner). */
+  private mayPush(doc: DocState, peerPk: string): boolean {
+    if (doc.ownerPk === this.pk) return doc.members.some((m) => m.pk === peerPk);
+    return peerPk === doc.ownerPk && doc.myRole === 'editor';
+  }
+  private docsWith(peerPk: string): string[] {
+    return Object.keys(this.docs).filter((id) => {
+      const d = this.docs[id];
+      return (d.ownerPk === this.pk && d.members.some((m) => m.pk === peerPk)) || d.ownerPk === peerPk;
+    });
+  }
+  private pushDocTo(peerPk: string, docId: string) {
+    const doc = this.docs[docId];
+    if (!doc || !this.mayPush(doc, peerPk)) return;
+    void this.sendTo(peerPk, { t: 'update', docId, ...this.pickLww(doc) });
+  }
+
+  /** Send a version digest to one peer. */
+  async syncWithPeer(peerPk: string) {
+    const ids = this.docsWith(peerPk);
+    if (!ids.length) return;
+    const digest: Record<string, { version: number; ts: number; author: string }> = {};
+    for (const id of ids) {
+      const d = this.docs[id];
+      digest[id] = { version: d.version, ts: d.ts, author: d.author };
+    }
+    try { await this.sendTo(peerPk, { t: 'sync', digest }); }
+    catch (e: any) { this.hooks.log('warn', `sync to ${short(peerPk, 12)} failed: ${e.message}`); }
+  }
+  /** Reconcile with every peer we share a chain with. */
+  async syncAllPeers() {
+    for (const peerPk of Object.keys(this.chains)) await this.syncWithPeer(peerPk);
+  }
+
+  private onSync(from: string, m: any) {
+    const digest = m.digest || {};
+    const reqIds: string[] = [];
+    for (const docId of Object.keys(digest)) {
+      const remote = digest[docId];
+      const local = this.docs[docId];
+      if (local && cmp(local, remote) > 0) this.pushDocTo(from, docId); // I'm ahead → push
+      else if (!local || cmp(local, remote) < 0) reqIds.push(docId);    // they're ahead → request
+    }
+    if (reqIds.length) void this.sendTo(from, { t: 'sync-req', docIds: reqIds });
+  }
+  private onSyncReq(from: string, m: any) {
+    for (const docId of m.docIds || []) this.pushDocTo(from, docId);
+  }
+
   private dispatch(from: string, m: any) {
     if (m.t === 'invite') return this.onInvite(from, m);
     if (m.t === 'update') return void this.onUpdate(from, m);
     if (m.t === 'ack') return this.hooks.log('ok', `${short(from, 12)} accepted the invite.`);
     if (m.t === 'hello') return this.hooks.log('ok', `Session with ${short(from, 12)} (re-)established.`);
+    if (m.t === 'sync') return void this.onSync(from, m);
+    if (m.t === 'sync-req') return void this.onSyncReq(from, m);
     this.hooks.log('info', 'unknown message type ' + m.t);
   }
 

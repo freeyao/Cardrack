@@ -41,10 +41,12 @@ documents never lost, automatic catch-up after offline, device switch without as
 ## Phases
 
 **P0 — reliability (blocking daily use)**
-Delivery: sequence numbers, gap detection, resend, persisted relay cursors. Session
-self-healing (auto re-handshake). Web Locks single-writer per identity. IndexedDB + migration.
-Encrypted doc index event (new device discovers its docs). Account: mnemonic backup ceremony,
-restore/QR migration, deviceId support.
+Delivery: ~~anti-entropy sync (periodic version-digest reconciliation; recovers arbitrary
+message loss and offline gaps for LWW state)~~ **done**; still todo: persisted relay cursors,
+per-message resend of intermediate ops (needed only once payloads are CRDT, not LWW). Session
+self-healing (auto re-handshake) **done**. Web Locks single-writer per identity. IndexedDB +
+migration. Encrypted doc index event (new device discovers its docs) **done**. Account:
+mnemonic backup ceremony **done**, restore **done** / QR migration, deviceId support.
 
 **P1 — collaboration core**
 Tiptap+Yjs (rich text, CRDT merge, presence). Version history: encrypted update log +

@@ -126,4 +126,6 @@ $('invite-send').addEventListener('click', async () => {
 });
 $('doc-close').addEventListener('click', () => { $('doc-view').classList.add('hidden'); currentDoc = null; renderDocList(); });
 
+window.addEventListener('beforeunload', () => core.stop());
+
 gate().catch((e) => logRow('warn', 'boot failed: ' + e.message));

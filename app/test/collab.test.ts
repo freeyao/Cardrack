@@ -7,7 +7,8 @@ beforeAll(() => { (globalThis as any).window = globalThis; });
 
 async function makeCore(relay: FakeRelay) {
   const hooks = collectHooks();
-  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks });
+  // syncIntervalMs: 0 disables the background timer so tests drive sync deterministically.
+  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks, syncIntervalMs: 0 });
   await core.startWithNewAccount(core.newMnemonic());
   return { core, hooks };
 }
@@ -70,7 +71,7 @@ describe('collab protocol', () => {
     // device restore: E's device dies; new core from same mnemonic
     await sleep(2300); // let E's debounced snapshot publish
     const N = { hooks: collectHooks() } as any;
-    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks });
+    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0 });
     await N.core.startWithMnemonic(E.core.mnemonic!);
     await sleep(200);
     expect(N.core.pk).toBe(E.core.pk);
@@ -98,5 +99,41 @@ describe('collab protocol', () => {
     await sleep(300);
     expect(O.core.docs[docId]).toBeUndefined();
     expect(O.hooks.text()).toContain('REJECTED invite');
+  }, 30000);
+
+  it('recovers a lost update via anti-entropy sync', async () => {
+    const relay = new FakeRelay();
+    const O = await makeCore(relay), E = await makeCore(relay);
+    await sleep(50);
+
+    const docId = O.core.createDoc('Notes');
+    await O.core.invite(docId, E.core.npub(), 'editor');
+    await sleep(300);
+    await O.core.localEdit(docId, 'first line', 'plain');
+    await sleep(300);
+    expect(E.core.docs[docId].content).toBe('first line'); // baseline converged
+
+    // simulate total loss of the next document envelope(s)
+    relay.dropFn = (ev) => ev.kind === 4078;
+    await O.core.localEdit(docId, 'first line + second (dropped in transit)', 'plain');
+    await sleep(200);
+    expect(E.core.docs[docId].content).toBe('first line'); // E never saw it
+    expect(O.core.docs[docId].content).toContain('second');
+
+    // network heals; anti-entropy reconciles the divergence
+    relay.dropFn = null;
+    await O.core.syncAllPeers();
+    await sleep(400);
+    expect(E.core.docs[docId].content).toBe('first line + second (dropped in transit)');
+
+    // and the reverse direction: an editor update lost, owner catches up on E's sync
+    relay.dropFn = (ev) => ev.kind === 4078;
+    await E.core.localEdit(docId, 'third line from editor (dropped)', 'plain');
+    await sleep(200);
+    expect(O.core.docs[docId].content).not.toContain('third');
+    relay.dropFn = null;
+    await E.core.syncAllPeers();
+    await sleep(400);
+    expect(O.core.docs[docId].content).toBe('third line from editor (dropped)');
   }, 30000);
 });

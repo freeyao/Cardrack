@@ -5,6 +5,8 @@ export class FakeRelay {
   events: any[] = [];
   subs: { filter: any; onevent: (ev: any) => void; closed: boolean }[] = [];
   wire: string[] = [];
+  /** When set, a matching publish is silently dropped (simulates relay/network loss). */
+  dropFn: ((ev: any) => boolean) | null = null;
 
   match(f: any, ev: any) {
     if (f.kinds && !f.kinds.includes(ev.kind)) return false;
@@ -15,6 +17,7 @@ export class FakeRelay {
   }
   publish(ev: any) {
     this.wire.push(ev.content);
+    if (this.dropFn && this.dropFn(ev)) return; // lost in transit: not stored, not delivered
     if (ev.kind >= 30000 && ev.kind < 40000) {
       const d = (ev.tags.find((t: any) => t[0] === 'd') || [])[1];
       this.events = this.events.filter(

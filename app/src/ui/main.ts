@@ -24,7 +24,19 @@ const core = new CollabCore({
   hooks: {
     log: logRow,
     docsChanged: () => renderDocList(),
-    docApplied: (docId) => { if (docId === currentDoc && pane) { const d = core.docs[docId]; pane.setContent(d.content, d.format, d.version); renderConflicts(docId); } },
+    docApplied: (docId) => {
+      if (docId !== currentDoc || !pane) return;
+      const d = core.docs[docId];
+      if (pane.isDirty()) {
+        // don't clobber an unsaved draft; note that the head moved
+        pane.setVersion(d.version);
+        pane.noteBehind(d.version);
+      } else {
+        pane.setContent(d.content, d.format, d.version);
+        baseHead = d.head;
+      }
+      renderConflicts(docId);
+    },
     status: (t) => { $('prekey-status').textContent = t; },
     conflictsChanged: (docId) => { if (docId === currentDoc) renderConflicts(docId); },
   },
@@ -32,6 +44,7 @@ const core = new CollabCore({
 
 let currentDoc: string | null = null;
 let pane: EditorPane | null = null;
+let baseHead = ''; // the head the editor's content was written against
 
 /* ---------- views ---------- */
 function renderDocList() {
@@ -84,7 +97,12 @@ function openDoc(docId: string) {
   ($('invite-npub').parentElement as HTMLElement).style.display = d.ownerPk === core.pk ? '' : 'none';
   renderMembers(docId);
   $('pane-doc').innerHTML = '';
-  pane = new EditorPane($('pane-doc'), '📄 ' + d.title, (content, format) => void core.localEdit(docId, content, format));
+  baseHead = d.head;
+  pane = new EditorPane($('pane-doc'), '📄 ' + d.title, (content, format) => {
+    void core.localEdit(docId, content, format, baseHead);
+    // owner advances immediately; editor keeps its base until the owner confirms
+    baseHead = core.docs[docId].head;
+  });
   pane.setContent(d.content, d.format, d.version);
   pane.setReadonly(d.myRole === 'viewer');
   renderConflicts(docId);

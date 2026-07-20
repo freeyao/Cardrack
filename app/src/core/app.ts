@@ -538,18 +538,32 @@ export class CollabCore {
     }
   }
 
-  async localEdit(docId: string, content: string, format: 'plain' | 'rich') {
+  /** Commit an edit. `parent` is the head the draft was written against (defaults
+   * to the current head); it lets a manual "Commit" detect that the document
+   * moved on underneath a long-lived draft. */
+  async localEdit(docId: string, content: string, format: 'plain' | 'rich', parent?: string) {
     const doc = this.docs[docId];
     if (!doc || doc.myRole === 'viewer') return;
-    const c = makeCommit(doc.head, this.pk, now(), content, format);
+    const base = parent ?? doc.head;
+    const c = makeCommit(base, this.pk, now(), content, format);
     if (doc.ownerPk === this.pk) {
-      // owner is the linearization point: self-accept, then fan out
-      const version = doc.version + 1;
-      this.applyCommit(doc, c, version);
-      this.saveAll();
-      for (const mem of doc.members) {
-        try { await this.sendTo(mem.pk, { t: 'commit-accepted', docId, version, commit: c }); }
-        catch (e: any) { this.hooks.log('warn', `send to ${short(mem.pk, 12)} failed: ${e.message}`); }
+      // owner is the linearization point. Fast-forward only.
+      if (base === doc.head) {
+        const version = doc.version + 1;
+        this.applyCommit(doc, c, version);
+        this.saveAll();
+        this.hooks.docApplied(docId);
+        for (const mem of doc.members) {
+          try { await this.sendTo(mem.pk, { t: 'commit-accepted', docId, version, commit: c }); }
+          catch (e: any) { this.hooks.log('warn', `send to ${short(mem.pk, 12)} failed: ${e.message}`); }
+        }
+      } else {
+        // owner's own draft was based on an older head (e.g. advanced from another
+        // device) — keep it as a conflict rather than clobbering the newer head.
+        (doc.conflicts ||= []).push(c);
+        this.saveAll();
+        this.hooks.log('warn', `Your edit to "${doc.title}" was based on an older version — kept as a conflict.`);
+        this.hooks.conflictsChanged?.(docId);
       }
     } else {
       // editor: propose to owner. Show my text optimistically, but leave the

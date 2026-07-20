@@ -49,8 +49,13 @@ migration. Encrypted doc index event (new device discovers its docs) **done**. A
 mnemonic backup ceremony **done**, restore **done** / QR migration, deviceId support.
 
 **P1 — collaboration core**
-Tiptap+Yjs (rich text, CRDT merge, presence). Version history: encrypted update log +
-epoch-tagged snapshots, timeline/diff/restore, named checkpoints. Doc-key epochs + dual-path
+~~Owner-sequenced commit chain: every edit names its parent; the owner accepts only
+fast-forward commits (CAS on the head) and rejects stale ones, preserving the loser's text
+as a conflict instead of silently clobbering (LWW replaced). Confirmed commits form the
+version chain.~~ **done** — conflict *resolution* is still manual (re-apply / discard) until
+CRDT payloads enable auto-merge. Tiptap+Yjs (rich text, CRDT merge, presence). Version
+history: encrypted update log + epoch-tagged snapshots, timeline/diff/restore, named
+checkpoints. Doc-key epochs + dual-path
 key envelopes (Signal session fast path; NIP-44 recovery path per policy). Signed membership
 credentials; removal → rotation; owner succession by member quorum. Permanent links + knock
 flow. Beyond owner-hub: all-pairs (≤5), then MLS.

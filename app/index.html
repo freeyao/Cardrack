@@ -56,6 +56,11 @@
   .log-row.warn .log-kind{color:var(--warn)}
   .log-row.wire .log-kind{color:var(--wire)}
   .hint{color:var(--muted);font-size:13px;margin:10px 0}
+  #conflict-box{margin:8px 0}
+  .conflict-hd{color:var(--warn);font-size:13px;margin-bottom:6px}
+  .conflict-row{display:flex;gap:8px;align-items:flex-start;background:#2a2119;border:1px solid #4a3a1f;border-radius:8px;padding:8px;margin-bottom:6px}
+  .conflict-row pre{flex:1;margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);max-height:120px;overflow:auto}
+  .conflict-row button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;margin-left:4px}
   .field{border:1px dashed var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:14px}
   .hidden{display:none!important}
 </style>
@@ -103,6 +108,7 @@
         <button id="doc-close" class="ghost">Back</button>
       </div>
       <div class="members" id="member-list"></div>
+      <div id="conflict-box"></div>
       <div class="pane" id="pane-doc"></div>
     </div>
     <div class="log" id="collab-log"></div>

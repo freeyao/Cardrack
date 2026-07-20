@@ -24,8 +24,9 @@ const core = new CollabCore({
   hooks: {
     log: logRow,
     docsChanged: () => renderDocList(),
-    docApplied: (docId) => { if (docId === currentDoc && pane) { const d = core.docs[docId]; pane.setContent(d.content, d.format, d.version); } },
+    docApplied: (docId) => { if (docId === currentDoc && pane) { const d = core.docs[docId]; pane.setContent(d.content, d.format, d.version); renderConflicts(docId); } },
     status: (t) => { $('prekey-status').textContent = t; },
+    conflictsChanged: (docId) => { if (docId === currentDoc) renderConflicts(docId); },
   },
 });
 
@@ -54,6 +55,27 @@ function renderMembers(docId: string) {
   $('member-list').innerHTML = rows.join('');
 }
 
+function renderConflicts(docId: string) {
+  const box = $('conflict-box');
+  const conflicts = core.conflictsOf(docId);
+  if (!conflicts.length) { box.innerHTML = ''; return; }
+  box.innerHTML =
+    `<div class="conflict-hd">⚠ ${conflicts.length} unmerged edit${conflicts.length > 1 ? 's' : ''} — the document changed while you were editing. Your text was kept:</div>` +
+    conflicts.map((c) =>
+      `<div class="conflict-row"><pre>${escapeHtml(c.content).slice(0, 400)}</pre>` +
+      `<span><button data-act="keep" data-id="${c.id}">Re-apply on latest</button>` +
+      `<button data-act="drop" data-id="${c.id}">Discard</button></span></div>`
+    ).join('');
+  box.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const id = (b as HTMLElement).dataset.id!;
+    if ((b as HTMLElement).dataset.act === 'keep') void core.resolveConflict(docId, id);
+    else core.discardConflict(docId, id);
+  }));
+}
+function escapeHtml(s: string) {
+  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+}
+
 function openDoc(docId: string) {
   const d = core.docs[docId];
   if (!d) return;
@@ -65,6 +87,7 @@ function openDoc(docId: string) {
   pane = new EditorPane($('pane-doc'), '📄 ' + d.title, (content, format) => void core.localEdit(docId, content, format));
   pane.setContent(d.content, d.format, d.version);
   pane.setReadonly(d.myRole === 'viewer');
+  renderConflicts(docId);
 }
 
 function showApp() {

@@ -12,10 +12,17 @@ export interface Hooks {
   docsChanged(): void;
   docApplied(docId: string): void;
   status(text: string): void;
+  conflictsChanged?(docId: string): void;
 }
+import type { Commit } from './commit';
+
 export interface DocState {
   title: string; ownerPk: string; myRole: 'owner' | 'editor' | 'viewer';
   members: { pk: string; role: 'editor' | 'viewer' }[];
+  // Confirmed head state (what the owner has linearized):
   content: string; format: 'plain' | 'rich';
   version: number; ts: number; author: string;
+  head: string;          // id of the confirmed head commit ('' = empty genesis)
+  history?: Commit[];    // accepted commits, newest last (capped)
+  conflicts?: Commit[];  // local commits the owner rejected as stale, kept for manual resolution
 }

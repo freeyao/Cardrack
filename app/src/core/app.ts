@@ -8,7 +8,8 @@ import {
 } from './signal';
 import { SignalProtocolStore } from './signal-store';
 import { Chain, deriveAddr, newChain } from './chains';
-import { applyRemote, cmp, localEdit } from './lww';
+import { cmp } from './lww';
+import { Commit, makeCommit, validCommit } from './commit';
 import {
   generateMnemonic, validateMnemonic, skFromMnemonic, pkFromSk, selfEncrypt, selfDecrypt,
 } from './account';
@@ -52,6 +53,7 @@ export class CollabCore {
   chainSub: { close(): void } | null = null;
   identityBundle: any = null;
   healAttempts: Record<string, number> = {};
+  pending: Record<string, Commit> = {}; // docId -> my commit awaiting owner confirmation
   snapTimer: any = null;
   syncTimer: any = null;
   syncIntervalMs: number;
@@ -318,10 +320,10 @@ export class CollabCore {
    * This makes documents self-heal after arbitrary message loss without
    * persisted relay cursors. */
 
-  /** True if I may push updates for `doc` to `peerPk` (owner→member, editor→owner). */
+  /** Only the owner re-pushes confirmed state (it is the authority); members
+   * that fall behind pull via sync-req instead. */
   private mayPush(doc: DocState, peerPk: string): boolean {
-    if (doc.ownerPk === this.pk) return doc.members.some((m) => m.pk === peerPk);
-    return peerPk === doc.ownerPk && doc.myRole === 'editor';
+    return doc.ownerPk === this.pk && doc.members.some((m) => m.pk === peerPk);
   }
   private docsWith(peerPk: string): string[] {
     return Object.keys(this.docs).filter((id) => {
@@ -332,10 +334,13 @@ export class CollabCore {
   private pushDocTo(peerPk: string, docId: string) {
     const doc = this.docs[docId];
     if (!doc || !this.mayPush(doc, peerPk)) return;
-    void this.sendTo(peerPk, { t: 'update', docId, ...this.pickLww(doc) });
+    // Only the owner's confirmed head is authoritative; re-send it as an accepted commit.
+    void this.sendTo(peerPk, { t: 'commit-accepted', docId, version: doc.version, commit: this.headCommit(doc) });
   }
 
-  /** Send a version digest to one peer. */
+  /** Send a version digest to one peer, and re-propose any of my commits still
+   * awaiting that peer's (owner's) confirmation — this recovers editor commits
+   * dropped in transit. */
   async syncWithPeer(peerPk: string) {
     const ids = this.docsWith(peerPk);
     if (!ids.length) return;
@@ -343,6 +348,11 @@ export class CollabCore {
     for (const id of ids) {
       const d = this.docs[id];
       digest[id] = { version: d.version, ts: d.ts, author: d.author };
+      // resend an unconfirmed commit to the owner
+      if (this.pending[id] && d.ownerPk === peerPk) {
+        try { await this.sendTo(peerPk, { t: 'commit', docId: id, commit: this.pending[id] }); }
+        catch (e: any) { this.hooks.log('warn', `resend commit failed: ${e.message}`); }
+      }
     }
     try { await this.sendTo(peerPk, { t: 'sync', digest }); }
     catch (e: any) { this.hooks.log('warn', `sync to ${short(peerPk, 12)} failed: ${e.message}`); }
@@ -369,7 +379,9 @@ export class CollabCore {
 
   private dispatch(from: string, m: any) {
     if (m.t === 'invite') return this.onInvite(from, m);
-    if (m.t === 'update') return void this.onUpdate(from, m);
+    if (m.t === 'commit') return void this.onCommit(from, m);            // editor → owner: proposed edit
+    if (m.t === 'commit-accepted') return void this.onCommitAccepted(from, m); // owner → members: linearized
+    if (m.t === 'commit-rejected') return void this.onCommitRejected(from, m); // owner → author: stale base
     if (m.t === 'ack') return this.hooks.log('ok', `${short(from, 12)} accepted the invite.`);
     if (m.t === 'hello') return this.hooks.log('ok', `Session with ${short(from, 12)} (re-)established.`);
     if (m.t === 'sync') return void this.onSync(from, m);
@@ -378,10 +390,12 @@ export class CollabCore {
   }
 
   private onInvite(from: string, m: any) {
+    const d = m.doc || {};
     this.docs[m.docId] = {
       title: m.title, ownerPk: from, myRole: m.role, members: m.members || [],
-      content: m.doc ? m.doc.content : '', format: m.doc ? m.doc.format : 'plain',
-      version: m.doc ? m.doc.version : 0, ts: m.doc ? m.doc.ts : 0, author: m.doc ? m.doc.author : '',
+      content: d.content || '', format: d.format || 'plain',
+      version: d.version || 0, ts: d.ts || 0, author: d.author || '',
+      head: d.head || '', history: [], conflicts: [],
     };
     this.saveAll();
     this.hooks.docsChanged();
@@ -389,35 +403,113 @@ export class CollabCore {
     void this.sendTo(from, { t: 'ack', docId: m.docId });
   }
 
-  private async onUpdate(from: string, m: any) {
+  /** Advance the confirmed head to `commit` at chain depth `version`. Shared by
+   * owner (on accept) and members (on receiving an accepted commit). */
+  private applyCommit(doc: DocState, commit: Commit, version: number) {
+    doc.head = commit.id;
+    doc.version = version;
+    doc.author = commit.author;
+    doc.ts = commit.ts;
+    doc.format = commit.format;
+    doc.content = commit.format === 'rich' ? this.sanitize(commit.content) : commit.content;
+    (doc.history ||= []).push(commit);
+    if (doc.history.length > 200) doc.history = doc.history.slice(-200);
+  }
+
+  /** A minimal commit object describing a doc's current confirmed head. */
+  private headCommit(doc: DocState): Commit {
+    return { id: doc.head, parent: '', author: doc.author, ts: doc.ts, content: doc.content, format: doc.format };
+  }
+
+  // ---- owner: linearize a proposed edit ----
+  private onCommit(from: string, m: any) {
     const doc = this.docs[m.docId];
-    if (!doc) return this.hooks.log('warn', 'update for unknown doc ' + m.docId);
-    const iAmOwner = doc.ownerPk === this.pk;
-    if (iAmOwner) {
-      const member = doc.members.find((x) => x.pk === from);
-      if (!member) return this.hooks.log('warn', `REJECTED update from non-member ${short(from, 12)}`);
-      if (member.role !== 'editor') return this.hooks.log('warn', `REJECTED update from ${short(from, 12)} — role is ${member.role}`);
-    } else if (from !== doc.ownerPk) {
-      return this.hooks.log('warn', `REJECTED update not relayed by owner (${short(from, 12)})`);
-    }
-    if (applyRemote(doc, m, this.sanitize)) {
+    if (!doc) return this.hooks.log('warn', 'commit for unknown doc ' + m.docId);
+    if (doc.ownerPk !== this.pk) return this.hooks.log('warn', `ignoring commit — I am not the owner of "${doc.title}"`);
+    const member = doc.members.find((x) => x.pk === from);
+    if (!member) return this.hooks.log('warn', `REJECTED commit from non-member ${short(from, 12)}`);
+    if (member.role !== 'editor') return this.hooks.log('warn', `REJECTED commit from ${short(from, 12)} — role is ${member.role}`);
+    const c: Commit = m.commit;
+    if (!validCommit(c)) return this.hooks.log('warn', `REJECTED commit from ${short(from, 12)} — bad commit id`);
+
+    if (c.parent === doc.head) {
+      // fast-forward: accept and linearize
+      const version = doc.version + 1;
+      this.applyCommit(doc, c, version);
       this.saveAll();
       this.hooks.docApplied(m.docId);
-      this.hooks.log('ok', `applied v${m.version} to "${doc.title}"`);
-      if (iAmOwner) {
-        for (const mem of doc.members) if (mem.pk !== from) void this.sendTo(mem.pk, { t: 'update', docId: m.docId, ...this.pickLww(doc) });
-      }
+      this.hooks.log('ok', `accepted commit ${short(c.id, 10)} → v${version} of "${doc.title}"`);
+      for (const mem of doc.members) void this.sendTo(mem.pk, { t: 'commit-accepted', docId: m.docId, version, commit: c });
+    } else {
+      // stale base: reject, hand back the current head so the author can reconcile
+      this.hooks.log('warn', `REJECTED stale commit from ${short(from, 12)} (based on old version of "${doc.title}")`);
+      void this.sendTo(from, { t: 'commit-rejected', docId: m.docId, version: doc.version, commit: this.headCommit(doc) });
     }
   }
 
-  private pickLww(d: DocState) {
-    return { version: d.version, ts: d.ts, author: d.author, content: d.content, format: d.format };
+  // ---- member: a commit the owner has confirmed ----
+  private onCommitAccepted(from: string, m: any) {
+    const doc = this.docs[m.docId];
+    if (!doc) return this.hooks.log('warn', 'accepted-commit for unknown doc ' + m.docId);
+    if (from !== doc.ownerPk) return this.hooks.log('warn', `REJECTED accepted-commit not from owner (${short(from, 12)})`);
+    const c: Commit = m.commit;
+    // my own edit got confirmed?
+    if (this.pending[m.docId] && this.pending[m.docId].id === c.id) delete this.pending[m.docId];
+    if (m.version > doc.version) {
+      this.applyCommit(doc, c, m.version);
+      this.saveAll();
+      this.hooks.docApplied(m.docId);
+      this.hooks.log('ok', `"${doc.title}" advanced to v${m.version}`);
+    }
+  }
+
+  // ---- author: my commit was based on stale history ----
+  private onCommitRejected(from: string, m: any) {
+    const doc = this.docs[m.docId];
+    if (!doc) return;
+    if (from !== doc.ownerPk) return this.hooks.log('warn', `ignoring reject not from owner (${short(from, 12)})`);
+    const mine = this.pending[m.docId];
+    // adopt the owner's newer head
+    if (m.version >= doc.version) { this.applyCommit(doc, m.commit, m.version); }
+    if (mine) {
+      (doc.conflicts ||= []).push(mine);
+      delete this.pending[m.docId];
+      this.hooks.log('warn', `Your edit to "${doc.title}" was based on an older version — kept as a conflict; document updated to v${doc.version}.`);
+    }
+    this.saveAll();
+    this.hooks.docApplied(m.docId);
+    this.hooks.conflictsChanged?.(m.docId);
   }
 
   /* ---------- public actions ---------- */
+  /** Snapshot of a doc's confirmed head, used to seed an invitee. */
+  private docSnapshot(d: DocState) {
+    return { content: d.content, format: d.format, version: d.version, ts: d.ts, author: d.author, head: d.head };
+  }
+  /** Pending/conflict info for the UI. */
+  conflictsOf(docId: string): Commit[] { return this.docs[docId]?.conflicts || []; }
+  hasPending(docId: string): boolean { return !!this.pending[docId]; }
+  /** Re-submit a preserved conflict's content as a fresh edit on the current head. */
+  async resolveConflict(docId: string, conflictId: string) {
+    const doc = this.docs[docId];
+    if (!doc) return;
+    const c = (doc.conflicts || []).find((x) => x.id === conflictId);
+    if (!c) return;
+    doc.conflicts = (doc.conflicts || []).filter((x) => x.id !== conflictId);
+    await this.localEdit(docId, c.content, c.format);
+    this.hooks.conflictsChanged?.(docId);
+  }
+  discardConflict(docId: string, conflictId: string) {
+    const doc = this.docs[docId];
+    if (!doc) return;
+    doc.conflicts = (doc.conflicts || []).filter((x) => x.id !== conflictId);
+    this.saveAll();
+    this.hooks.conflictsChanged?.(docId);
+  }
+
   createDoc(title: string): string {
     const docId = hexFromBytes(crypto.getRandomValues(new Uint8Array(8)));
-    this.docs[docId] = { title: title || 'Untitled', ownerPk: this.pk, myRole: 'owner', members: [], content: '', format: 'plain', version: 0, ts: 0, author: '' };
+    this.docs[docId] = { title: title || 'Untitled', ownerPk: this.pk, myRole: 'owner', members: [], content: '', format: 'plain', version: 0, ts: 0, author: '', head: '', history: [], conflicts: [] };
     this.saveAll();
     this.hooks.docsChanged();
     return docId;
@@ -436,7 +528,7 @@ export class CollabCore {
     try {
       const hasChain = !!this.chains[peerPk];
       const seed = hasChain ? this.chains[peerPk].seed : b64FromBuf(crypto.getRandomValues(new Uint8Array(32)).buffer as ArrayBuffer);
-      await this.sendTo(peerPk, { t: 'invite', from: this.pk, seed, docId, title: doc.title, role, members: [], doc: this.pickLww(doc) });
+      await this.sendTo(peerPk, { t: 'invite', from: this.pk, seed, docId, title: doc.title, role, members: [], doc: this.docSnapshot(doc) });
       if (!hasChain) this.setupChain(peerPk, seed, true);
       this.hooks.log('ok', `Invite sent to ${short(peerPk, 16)} as ${role}.`);
     } catch (e) {
@@ -449,12 +541,25 @@ export class CollabCore {
   async localEdit(docId: string, content: string, format: 'plain' | 'rich') {
     const doc = this.docs[docId];
     if (!doc || doc.myRole === 'viewer') return;
-    localEdit(doc, content, format, this.pk, now());
-    this.saveAll();
-    const targets = doc.ownerPk === this.pk ? doc.members.map((x) => x.pk) : [doc.ownerPk];
-    for (const t of targets) {
-      try { await this.sendTo(t, { t: 'update', docId, ...this.pickLww(doc) }); }
-      catch (e: any) { this.hooks.log('warn', `send to ${short(t, 12)} failed: ${e.message}`); }
+    const c = makeCommit(doc.head, this.pk, now(), content, format);
+    if (doc.ownerPk === this.pk) {
+      // owner is the linearization point: self-accept, then fan out
+      const version = doc.version + 1;
+      this.applyCommit(doc, c, version);
+      this.saveAll();
+      for (const mem of doc.members) {
+        try { await this.sendTo(mem.pk, { t: 'commit-accepted', docId, version, commit: c }); }
+        catch (e: any) { this.hooks.log('warn', `send to ${short(mem.pk, 12)} failed: ${e.message}`); }
+      }
+    } else {
+      // editor: propose to owner. Show my text optimistically, but leave the
+      // confirmed head/version untouched until the owner confirms.
+      this.pending[docId] = c;
+      doc.content = format === 'rich' ? this.sanitize(content) : content;
+      doc.format = format;
+      this.saveAll();
+      try { await this.sendTo(doc.ownerPk, { t: 'commit', docId, commit: c }); }
+      catch (e: any) { this.hooks.log('warn', `send commit failed: ${e.message}`); }
     }
   }
 }

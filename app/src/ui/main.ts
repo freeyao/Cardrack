@@ -1,10 +1,17 @@
 // UI wiring: account gate, doc list/view, logs. All protocol logic is in core/.
 import { SimplePool } from 'nostr-tools/pool';
 import { CollabCore } from '../core/app';
+import { CachedKV } from '../core/kv';
+import { IdbBackend, acquireWriterLock, legacyEntries } from './idb';
 import { EditorPane } from './editor';
 import { sanitizeHtml } from './sanitize';
 
 const $ = (id: string) => document.getElementById(id)!;
+const LEGACY_PREFIX = 'sc2.'; // localStorage keys used before IndexedDB
+
+// Durable IndexedDB storage behind a synchronous cache. Preloaded (and, for the
+// writer tab, seeded from any legacy localStorage) during setup() before boot.
+const storage = new CachedKV(new IdbBackend());
 const short = (s: string, n = 18) => (s.length > n ? s.slice(0, n) + '…' : s);
 
 function logRow(kind: string, text: string) {
@@ -19,7 +26,7 @@ function logRow(kind: string, text: string) {
 
 const core = new CollabCore({
   pool: new SimplePool() as any,
-  storage: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+  storage,
   sanitize: sanitizeHtml,
   hooks: {
     log: logRow,
@@ -45,6 +52,15 @@ const core = new CollabCore({
 let currentDoc: string | null = null;
 let pane: EditorPane | null = null;
 let baseHead = ''; // the head the editor's content was written against
+let readOnly = false; // true when another tab holds the single-writer lock
+
+function applyReadOnly() {
+  if (!readOnly) return;
+  $('ro-banner').classList.remove('hidden');
+  ($('doc-create') as HTMLButtonElement).disabled = true;
+  ($('invite-send') as HTMLButtonElement).disabled = true;
+  ($('doc-title') as HTMLInputElement).disabled = true;
+}
 
 /* ---------- views ---------- */
 function renderDocList() {
@@ -104,7 +120,7 @@ function openDoc(docId: string) {
     baseHead = core.docs[docId].head;
   });
   pane.setContent(d.content, d.format, d.version);
-  pane.setReadonly(d.myRole === 'viewer');
+  pane.setReadonly(d.myRole === 'viewer' || readOnly);
   renderConflicts(docId);
 }
 
@@ -114,7 +130,8 @@ function showApp() {
   const npub = core.npub();
   $('my-npub').textContent = npub;
   $('my-npub').addEventListener('click', () => { navigator.clipboard?.writeText(npub).then(() => logRow('info', 'npub copied')); });
-  const mn = localStorage.getItem('sc2.mnemonic');
+  applyReadOnly();
+  const mn = storage.get('sc2.mnemonic');
   if (mn) {
     const sm = $('show-mnemonic');
     sm.style.display = '';
@@ -169,4 +186,17 @@ $('doc-close').addEventListener('click', () => { $('doc-view').classList.add('hi
 
 window.addEventListener('beforeunload', () => core.stop());
 
-gate().catch((e) => logRow('warn', 'boot failed: ' + e.message));
+/** Acquire the single-writer lock, preload storage (migrating any legacy
+ * localStorage on the writer tab), then run the account gate. A second tab of
+ * the same account becomes read-only so it cannot corrupt the Signal store. */
+async function setup() {
+  const isWriter = await acquireWriterLock();
+  readOnly = !isWriter;
+  storage.setWritable(isWriter);
+  core.readOnly = readOnly;
+  await storage.open(isWriter ? legacyEntries(LEGACY_PREFIX) : undefined);
+  if (readOnly) logRow('warn', 'Cardrack is already open in another tab — this tab is read-only.');
+  await gate();
+}
+
+setup().catch((e) => logRow('warn', 'boot failed: ' + e.message));

@@ -65,6 +65,7 @@
   .conflict-row pre{flex:1;margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text);max-height:120px;overflow:auto}
   .conflict-row button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;margin-left:4px}
   .field{border:1px dashed var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:14px}
+  .banner{background:#3d321f;border:1px solid #4a3a1f;color:var(--warn);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px}
   .hidden{display:none!important}
 </style>
 </head>
@@ -92,6 +93,7 @@
   </div>
 
   <div id="app-main" class="hidden">
+    <div id="ro-banner" class="banner hidden">👀 This tab is <b>read-only</b> — Cardrack is open in another tab. To edit here, close the other tab and reload.</div>
     <div class="idbar">
       <span>me:</span><span class="npub" id="my-npub" title="click to copy">…</span>
       <span class="pkstat" id="prekey-status">initializing…</span>

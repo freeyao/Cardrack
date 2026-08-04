@@ -5,3 +5,6 @@ dist/
 app/node_modules/
 app/dist/
 *.timestamp-*.mjs
+
+# Claude Code local project instructions (not shared)
+CLAUDE.md

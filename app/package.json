@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@privacyresearch/libsignal-protocol-typescript": "^0.0.16",
-    "nostr-tools": "^2.23.12"
+    "nostr-tools": "^2.23.12",
+    "yjs": "^13.6.31"
   },
   "devDependencies": {
     "vite": "^6.0.0",

@@ -40,11 +40,11 @@ describe('collab protocol', () => {
     expect(O.core.docs[docId].content).toBe('Ship v1 by October. Editor adds detail.');
     expect(V.core.docs[docId].content).toBe('Ship v1 by October. Editor adds detail.');
 
-    // malicious viewer bypasses UI guard and sends a forged commit → owner rejects on role
-    await V.core.sendTo(O.core.pk, { t: 'commit', docId, commit: { id: 'x', parent: '', author: V.core.pk, ts: Date.now(), content: 'HACKED', format: 'plain' } });
+    // malicious viewer bypasses UI guard and sends a forged update → owner rejects on role
+    await V.core.sendTo(O.core.pk, { t: 'update', docId, update: 'HACKED' });
     await sleep(300);
     expect(O.core.docs[docId].content).not.toContain('HACKED');
-    expect(O.hooks.text()).toContain('REJECTED commit');
+    expect(O.hooks.text()).toContain('REJECTED update');
 
     // stranger with no membership
     const S = await makeCore(relay);
@@ -101,39 +101,29 @@ describe('collab protocol', () => {
     expect(O.hooks.text()).toContain('REJECTED invite');
   }, 30000);
 
-  it('rejects a commit based on stale history and preserves it as a conflict', async () => {
+  it('auto-merges concurrent edits to different regions (no clobber, no manual conflict)', async () => {
     const relay = new FakeRelay();
     const O = await makeCore(relay), E = await makeCore(relay);
     await sleep(50);
     const docId = O.core.createDoc('Spec');
     await O.core.invite(docId, E.core.npub(), 'editor');
     await sleep(300);
-    await O.core.localEdit(docId, 'base v1', 'plain');
+    await O.core.localEdit(docId, 'The quick brown fox', 'plain');
     await sleep(300);
-    expect(E.core.docs[docId].content).toBe('base v1'); // both on head H1
+    expect(E.core.docs[docId].content).toBe('The quick brown fox'); // converged base
 
-    // Concurrent edits both based on H1: E proposes, but the owner commits first,
-    // so E's commit arrives with a stale parent.
-    await E.core.localEdit(docId, 'E edit on top of v1', 'plain'); // in flight, parent = H1
-    await O.core.localEdit(docId, 'O edit on top of v1', 'plain'); // owner self-accepts → H2
-    await sleep(400);
+    // Concurrent, non-overlapping edits: E inserts near the front, O appends.
+    await E.core.localEdit(docId, 'The very quick brown fox', 'plain');
+    await O.core.localEdit(docId, 'The quick brown fox jumps', 'plain');
+    await sleep(500);
 
-    // Owner is authoritative; E converges to the owner's version…
-    expect(O.core.docs[docId].content).toBe('O edit on top of v1');
-    expect(E.core.docs[docId].content).toBe('O edit on top of v1');
-    // …and E's rejected edit is preserved, not lost, as a conflict.
-    const conflicts = E.core.conflictsOf(docId);
-    expect(conflicts.length).toBe(1);
-    expect(conflicts[0].content).toBe('E edit on top of v1');
-    expect(E.hooks.text()).toContain('based on an older version');
+    // Both edits survive and both peers converge — the CRDT merges automatically,
+    // so nobody's text is clobbered and no manual conflict is raised.
+    const expected = 'The very quick brown fox jumps';
+    expect(O.core.docs[docId].content).toBe(expected);
+    expect(E.core.docs[docId].content).toBe(expected);
     expect(O.core.conflictsOf(docId).length).toBe(0);
-
-    // E resolves the conflict by re-applying its content on the current head → accepted
-    await E.core.resolveConflict(docId, conflicts[0].id);
-    await sleep(400);
     expect(E.core.conflictsOf(docId).length).toBe(0);
-    expect(O.core.docs[docId].content).toBe('E edit on top of v1');
-    expect(E.core.docs[docId].content).toBe('E edit on top of v1');
   }, 30000);
 
   it('recovers a lost update via anti-entropy sync', async () => {

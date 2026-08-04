@@ -19,10 +19,12 @@ import type { Commit } from './commit';
 export interface DocState {
   title: string; ownerPk: string; myRole: 'owner' | 'editor' | 'viewer';
   members: { pk: string; role: 'editor' | 'viewer' }[];
-  // Confirmed head state (what the owner has linearized):
+  // Materialized view of the CRDT (owner-sequenced). `content` is the fold of the
+  // Yjs doc; `ystate` is its serialized state (base64) — the durable source of truth.
   content: string; format: 'plain' | 'rich';
   version: number; ts: number; author: string;
-  head: string;          // id of the confirmed head commit ('' = empty genesis)
-  history?: Commit[];    // accepted commits, newest last (capped)
-  conflicts?: Commit[];  // local commits the owner rejected as stale, kept for manual resolution
+  ystate?: string;       // base64 of the Yjs doc state (encodeStateAsUpdate)
+  head: string;          // legacy commit-chain field, retained for compatibility ('' now)
+  history?: Commit[];    // retained; unused by the Yjs path
+  conflicts?: Commit[];  // retained for UI compatibility; the CRDT path leaves this empty
 }

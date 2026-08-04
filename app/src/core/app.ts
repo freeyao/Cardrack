@@ -395,7 +395,21 @@ export class CollabCore {
     if (m.t === 'hello') return this.hooks.log('ok', `Session with ${short(from, 12)} (re-)established.`);
     if (m.t === 'sync') return void this.onSync(from, m);
     if (m.t === 'sync-ack') return void this.onSyncAck(from, m);
+    if (m.t === 'rename') return this.onRename(from, m);        // owner → members: title change
     this.hooks.log('info', 'unknown message type ' + m.t);
+  }
+
+  // ---- member: the owner renamed the doc ----
+  private onRename(from: string, m: any) {
+    const doc = this.docs[m.docId];
+    if (!doc) return;
+    if (from !== doc.ownerPk) return this.hooks.log('warn', `ignoring rename not from owner (${short(from, 12)})`);
+    const title = typeof m.title === 'string' ? m.title.trim() : '';
+    if (!title || title === doc.title) return;
+    doc.title = title;
+    this.saveAll();
+    this.hooks.docsChanged();
+    this.hooks.log('ok', `"${doc.title}" renamed by owner`);
   }
 
   private onInvite(from: string, m: any) {
@@ -505,6 +519,25 @@ export class CollabCore {
     if (!this.readOnly) return true;
     this.hooks.log('warn', 'This tab is read-only — Cardrack is active in another tab.');
     return false;
+  }
+
+  /** Rename a doc. Owner-authoritative: only the owner's rename propagates to
+   * members (matching the owner-hub model); a non-owner's local change would be
+   * overwritten, so we refuse it. */
+  async renameDoc(docId: string, title: string) {
+    if (!this.mutable()) return;
+    const doc = this.docs[docId];
+    if (!doc) return;
+    title = (title || '').trim();
+    if (!title || title === doc.title) return;
+    if (doc.ownerPk !== this.pk) return this.hooks.log('warn', 'only the owner can rename this document');
+    doc.title = title;
+    this.saveAll();
+    this.hooks.docsChanged();
+    for (const mem of doc.members) {
+      try { await this.sendTo(mem.pk, { t: 'rename', docId, title }); }
+      catch (e: any) { this.hooks.log('warn', `rename notify to ${short(mem.pk, 12)} failed: ${e.message}`); }
+    }
   }
 
   createDoc(title: string): string {

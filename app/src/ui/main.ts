@@ -219,9 +219,22 @@ async function gate() {
 /* ---------- actions ---------- */
 $('doc-create').addEventListener('click', () => {
   const title = ($('doc-title') as HTMLInputElement).value.trim();
+  const id = core.createDoc(title);
+  if (!id) return; // read-only tab (or failed) — don't pretend we created anything
   ($('doc-title') as HTMLInputElement).value = '';
-  openDoc(core.createDoc(title));
+  openDoc(id);
   logRow('info', `Created "${title || 'Untitled'}" — invite a collaborator by npub.`);
+});
+$('doc-rename').addEventListener('click', async () => {
+  if (!currentDoc) return;
+  const d = core.docs[currentDoc];
+  if (!d) return;
+  const t = prompt('Rename document', d.title);
+  if (t == null) return; // cancelled
+  await core.renameDoc(currentDoc, t);
+  const nd = core.docs[currentDoc];
+  pane?.setTitle('📄 ' + nd.title);
+  renderDocList();
 });
 $('invite-send').addEventListener('click', async () => {
   if (!currentDoc) return;

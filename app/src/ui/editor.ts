@@ -117,6 +117,7 @@ export class EditorPane {
     this.setNote('');
   }
   setVersion(v: number) { this.verEl.textContent = 'v' + v; }
+  setTitle(title: string) { (this.root.querySelector('.pane-title') as HTMLElement).textContent = title; }
   /** A newer confirmed version exists while the user has an unsaved draft. */
   noteBehind(v: number) { this.setNote(`updated to v${v} elsewhere — your draft is preserved; committing will conflict`); }
   private setNote(t: string) { this.noteEl.textContent = t; }

@@ -107,6 +107,25 @@ describe('collab protocol', () => {
     expect(N.core.docs[docId]?.content).toBe('private, no collaborators');
   }, 30000);
 
+  it('owner renames a doc and it propagates to members; non-owner cannot', async () => {
+    const relay = new FakeRelay();
+    const O = await makeCore(relay), E = await makeCore(relay);
+    await sleep(50);
+    const docId = O.core.createDoc('Old name');
+    await O.core.invite(docId, E.core.npub(), 'editor');
+    await sleep(300);
+    expect(E.core.docs[docId].title).toBe('Old name');
+
+    await O.core.renameDoc(docId, 'New name');
+    await sleep(300);
+    expect(O.core.docs[docId].title).toBe('New name');
+    expect(E.core.docs[docId].title).toBe('New name'); // propagated
+
+    await E.core.renameDoc(docId, 'Editor tries to rename');
+    await sleep(200);
+    expect(O.core.docs[docId].title).toBe('New name'); // non-owner rename refused
+  }, 30000);
+
   it('rejects an invite whose claimed sender does not match the signed prekey bundle', async () => {
     const relay = new FakeRelay();
     const O = await makeCore(relay), X = await makeCore(relay), Y = await makeCore(relay);

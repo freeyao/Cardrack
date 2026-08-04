@@ -241,11 +241,19 @@ window.addEventListener('beforeunload', () => core.stop());
  * localStorage on the writer tab), then run the account gate. A second tab of
  * the same account becomes read-only so it cannot corrupt the Signal store. */
 async function setup() {
-  const isWriter = await acquireWriterLock();
+  let isWriter = true;
+  try { isWriter = await acquireWriterLock(); } catch { isWriter = true; }
   readOnly = !isWriter;
   storage.setWritable(isWriter);
   core.readOnly = readOnly;
-  await storage.open(isWriter ? legacyEntries(LEGACY_PREFIX) : undefined);
+  // Storage init must never block the UI: on file:// or where IndexedDB/localStorage
+  // is unavailable the app still boots (in-memory), so the account gate always shows.
+  try {
+    const seed = isWriter ? legacyEntries(LEGACY_PREFIX) : undefined;
+    await storage.open(seed);
+  } catch (e: any) {
+    logRow('warn', 'storage unavailable — continuing without persistence: ' + e.message);
+  }
   if (readOnly) logRow('warn', 'Cardrack is already open in another tab — this tab is read-only.');
   await gate();
 }

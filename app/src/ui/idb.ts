@@ -3,37 +3,67 @@
 // stay out of the DOM-free core.
 import type { AsyncStore } from '../core/kv';
 
-/** A durable AsyncStore backed by a single IndexedDB object store. */
+/** localStorage-backed AsyncStore — the fallback when IndexedDB is unavailable.
+ * IndexedDB is blocked or throws in several local contexts (a single-file build
+ * opened over file://, Firefox on file://, some privacy modes); localStorage
+ * still works there, which is what the app used before IndexedDB. */
+export class LocalStorageBackend implements AsyncStore {
+  async loadAll(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k) out[k] = localStorage.getItem(k)!; }
+    } catch {}
+    return out;
+  }
+  write(key: string, value: string): void { try { localStorage.setItem(key, value); } catch {} }
+  remove(key: string): void { try { localStorage.removeItem(key); } catch {} }
+}
+
+/** A durable AsyncStore backed by a single IndexedDB object store, with a
+ * transparent localStorage fallback if IndexedDB can't be opened or read. */
 export class IdbBackend implements AsyncStore {
-  private dbp: Promise<IDBDatabase>;
+  private dbp: Promise<IDBDatabase | null>;
+  private fb: LocalStorageBackend | null = null;
   constructor(private dbName = 'cardrack', private storeName = 'kv') {
-    this.dbp = new Promise((resolve, reject) => {
-      const req = indexedDB.open(dbName, 1);
+    this.dbp = new Promise((resolve) => {
+      let req: IDBOpenDBRequest;
+      try { req = indexedDB.open(dbName, 1); } catch { resolve(null); return; } // IndexedDB missing entirely
       req.onupgradeneeded = () => req.result.createObjectStore(this.storeName);
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onerror = () => resolve(null);   // e.g. blocked on file://
+      req.onblocked = () => resolve(null);
     });
   }
+  private lsfb(): LocalStorageBackend { return (this.fb ||= new LocalStorageBackend()); }
 
   async loadAll(): Promise<Record<string, string>> {
     const db = await this.dbp;
-    return new Promise((resolve, reject) => {
-      const out: Record<string, string> = {};
-      const req = db.transaction(this.storeName, 'readonly').objectStore(this.storeName).openCursor();
-      req.onsuccess = () => {
-        const cur = req.result;
-        if (cur) { out[cur.key as string] = cur.value as string; cur.continue(); }
-        else resolve(out);
-      };
-      req.onerror = () => reject(req.error);
-    });
+    if (!db) return this.lsfb().loadAll();
+    try {
+      return await new Promise<Record<string, string>>((resolve, reject) => {
+        const out: Record<string, string> = {};
+        const req = db.transaction(this.storeName, 'readonly').objectStore(this.storeName).openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (cur) { out[cur.key as string] = cur.value as string; cur.continue(); }
+          else resolve(out);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch { return this.lsfb().loadAll(); }
   }
 
   write(key: string, value: string): void {
-    this.dbp.then((db) => db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).put(value, key)).catch(() => {});
+    this.dbp.then((db) => {
+      if (!db) return this.lsfb().write(key, value);
+      db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).put(value, key);
+    }).catch(() => this.lsfb().write(key, value));
   }
   remove(key: string): void {
-    this.dbp.then((db) => db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).delete(key)).catch(() => {});
+    this.dbp.then((db) => {
+      if (!db) return this.lsfb().remove(key);
+      db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).delete(key);
+    }).catch(() => this.lsfb().remove(key));
   }
 }
 

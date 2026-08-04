@@ -54,6 +54,52 @@ let pane: EditorPane | null = null;
 let baseHead = ''; // the head the editor's content was written against
 let readOnly = false; // true when another tab holds the single-writer lock
 
+// Per-doc real-time toggle (default off = manual Commit). Local-only preference,
+// persisted outside the synced account snapshot.
+const liveModes: Record<string, boolean> = {};
+function loadLiveModes() { try { Object.assign(liveModes, JSON.parse(storage.get('sc2.livemodes') || '{}')); } catch {} }
+function saveLiveModes() { storage.set('sc2.livemodes', JSON.stringify(liveModes)); }
+
+let liveTimer: any = null;
+function scheduleLive(docId: string, content: string, format: 'plain' | 'rich') {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    void core.localEdit(docId, content, format, baseHead);
+    baseHead = core.docs[docId].head;
+  }, 400);
+}
+
+/** Enable/disable real-time for a doc. Turning it on requires a strong,
+ * explicit confirmation of the metadata trade-off; turning it off is immediate. */
+function toggleLive(docId: string) {
+  if (liveModes[docId]) {
+    liveModes[docId] = false; saveLiveModes();
+    pane?.setLive(false);
+    logRow('info', 'Real-time editing off — edits sync only when you Commit.');
+    return;
+  }
+  showLiveModal(() => {
+    liveModes[docId] = true; saveLiveModes();
+    pane?.setLive(true);
+    logRow('warn', 'Real-time editing ON — your edit timing is now visible to relays.');
+  });
+}
+
+function showLiveModal(onConfirm: () => void) {
+  const modal = $('live-modal');
+  const ack = $('live-ack') as HTMLInputElement;
+  const confirmBtn = $('live-confirm') as HTMLButtonElement;
+  ack.checked = false; confirmBtn.disabled = true;
+  modal.classList.remove('hidden');
+  const close = () => {
+    modal.classList.add('hidden');
+    ack.onchange = null; confirmBtn.onclick = null; ($('live-cancel') as HTMLButtonElement).onclick = null;
+  };
+  ack.onchange = () => { confirmBtn.disabled = !ack.checked; };
+  ($('live-cancel') as HTMLButtonElement).onclick = close;
+  confirmBtn.onclick = () => { close(); onConfirm(); };
+}
+
 function applyReadOnly() {
   if (!readOnly) return;
   $('ro-banner').classList.remove('hidden');
@@ -118,9 +164,13 @@ function openDoc(docId: string) {
     void core.localEdit(docId, content, format, baseHead);
     // owner advances immediately; editor keeps its base until the owner confirms
     baseHead = core.docs[docId].head;
+  }, {
+    onChange: (content, format) => scheduleLive(docId, content, format),
+    onToggleLive: () => toggleLive(docId),
   });
   pane.setContent(d.content, d.format, d.version);
   pane.setReadonly(d.myRole === 'viewer' || readOnly);
+  if (d.myRole !== 'viewer' && !readOnly) pane.setLive(!!liveModes[docId]);
   renderConflicts(docId);
 }
 
@@ -130,6 +180,7 @@ function showApp() {
   const npub = core.npub();
   $('my-npub').textContent = npub;
   $('my-npub').addEventListener('click', () => { navigator.clipboard?.writeText(npub).then(() => logRow('info', 'npub copied')); });
+  loadLiveModes();
   applyReadOnly();
   const mn = storage.get('sc2.mnemonic');
   if (mn) {

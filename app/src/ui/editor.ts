@@ -15,7 +15,14 @@ export class EditorPane {
   private commitBtn: HTMLButtonElement;
   private noteEl: HTMLElement;
 
-  constructor(root: HTMLElement, title: string, private onCommit: (content: string, format: 'plain' | 'rich') => void) {
+  live = false;
+
+  constructor(
+    root: HTMLElement,
+    title: string,
+    private onCommit: (content: string, format: 'plain' | 'rich') => void,
+    private opts: { onChange?: (content: string, format: 'plain' | 'rich') => void; onToggleLive?: () => void } = {}
+  ) {
     this.root = root;
     root.innerHTML = `
       <div class="pane-head">
@@ -32,6 +39,7 @@ export class EditorPane {
           <button data-cmd="underline"><u>U</u></button>
           <button data-cmd="h2">H</button>
         </span>
+        <button data-role="live-toggle" class="live-btn" title="How your edits reach collaborators">⚡ Live: off</button>
         <button data-role="commit" class="commit-btn" disabled>Commit ⌘↵</button>
       </div>
       <textarea class="editor-plain" data-role="plain" placeholder="Type freely — nothing is shared until you Commit."></textarea>
@@ -43,13 +51,19 @@ export class EditorPane {
     this.commitBtn = root.querySelector('[data-role=commit]')!;
     this.noteEl = root.querySelector('[data-role=note]')!;
 
-    const onInput = () => { if (!this.suppress && !this.readonly) this.setDirty(true); };
+    const onInput = () => {
+      if (this.suppress || this.readonly) return;
+      this.setDirty(true);
+      // in real-time mode every edit is streamed out; main.ts debounces it
+      if (this.live) this.opts.onChange?.(this.getContent(), this.format);
+    };
     this.plainEl.addEventListener('input', onInput);
     this.richEl.addEventListener('input', onInput);
     const keyCommit = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); this.commit(); } };
     this.plainEl.addEventListener('keydown', keyCommit);
     this.richEl.addEventListener('keydown', keyCommit as any);
     this.commitBtn.addEventListener('click', () => this.commit());
+    (root.querySelector('[data-role=live-toggle]') as HTMLElement).addEventListener('click', () => this.opts.onToggleLive?.());
 
     root.querySelector('.toolbar')!.addEventListener('click', (e) => {
       const btn = (e.target as Element).closest('button');
@@ -111,9 +125,20 @@ export class EditorPane {
     this.readonly = ro;
     this.plainEl.readOnly = ro;
     (this.richEl as HTMLElement).contentEditable = ro ? 'false' : 'true';
-    this.commitBtn.style.display = ro ? 'none' : '';
+    this.commitBtn.style.display = ro || this.live ? 'none' : '';
+    (this.root.querySelector('[data-role=live-toggle]') as HTMLElement).style.display = ro ? 'none' : '';
     this.roleBadge.textContent = ro ? 'viewer' : 'editor';
     this.roleBadge.classList.toggle('viewer', ro);
     this.root.classList.toggle('readonly', ro);
+  }
+
+  /** Real-time mode: edits stream out as you type (Commit is hidden). */
+  setLive(live: boolean) {
+    this.live = live;
+    const btn = this.root.querySelector('[data-role=live-toggle]') as HTMLElement;
+    btn.textContent = '⚡ Live: ' + (live ? 'on' : 'off');
+    btn.classList.toggle('on', live);
+    this.commitBtn.style.display = live || this.readonly ? 'none' : '';
+    this.setNote(live ? 'real-time — edits sync as you type' : '');
   }
 }

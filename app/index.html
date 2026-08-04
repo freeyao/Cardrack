@@ -66,6 +66,17 @@
   .conflict-row button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;margin-left:4px}
   .field{border:1px dashed var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:14px}
   .banner{background:#3d321f;border:1px solid #4a3a1f;color:var(--warn);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px}
+  .live-btn{background:var(--panel2)!important;color:var(--muted)!important;border:1px solid var(--border)!important;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;margin-left:auto}
+  .live-btn.on{background:#2a2340!important;color:var(--wire)!important;border-color:#4a3f6b!important}
+  .live-btn.on+.commit-btn{margin-left:6px}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:460px;width:100%}
+  .modal h3{margin-bottom:10px}
+  .modal p{font-size:13px;color:var(--muted);margin-bottom:10px}
+  .modal .warn-text{color:var(--warn)}
+  .modal .warn-text b{color:var(--text)}
+  .modal-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text);margin:12px 0}
+  .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
   .hidden{display:none!important}
 </style>
 </head>
@@ -118,6 +129,19 @@
     </div>
     <div class="log" id="collab-log"></div>
     <p class="hint">Create a document → invite by npub (their signed prekey bundle is verified before the Signal handshake) → collaborate. Relays only ever see ciphertext between unlinkable one-time addresses.</p>
+  </div>
+
+  <div id="live-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h3>⚡ Enable real-time editing?</h3>
+      <p>By default, your edits stay on this device until you click <b>Commit</b>. Real-time mode instead sends each change to collaborators <b>continuously as you type</b>.</p>
+      <p class="warn-text">Your text stays end-to-end encrypted — relays never read it. But real-time mode <b>does reveal to the relays when and how often you are typing</b>. Manual Commit hides that by batching your edits. Only turn this on if you accept the metadata trade-off.</p>
+      <label class="modal-check"><input type="checkbox" id="live-ack"> I understand real-time editing reveals my edit timing to the relays.</label>
+      <div class="modal-actions">
+        <button id="live-cancel" class="ghost">Cancel</button>
+        <button id="live-confirm" class="primary" disabled>Enable real-time</button>
+      </div>
+    </div>
   </div>
 </div>
 <script type="module" src="/src/ui/main.ts"></script>

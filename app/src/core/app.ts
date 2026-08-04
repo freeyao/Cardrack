@@ -160,7 +160,16 @@ export class CollabCore {
     this.hooks.log('info', 'Encrypted account snapshot updated on relays.');
   }
   async restoreFromSnapshot() {
-    const ev = await this.pool.get(this.relays, { kinds: [KIND_SELFSNAP], authors: [this.pk], '#d': [DTAG_SNAP] });
+    // A solo account (nobody invited) has no peer to re-sync from — the encrypted
+    // self-snapshot is the ONLY recovery path. Relay sockets may not be connected
+    // when we first ask, so a single get() can return null and lose everything.
+    // Retry a few times before concluding there is no snapshot.
+    const filter = { kinds: [KIND_SELFSNAP], authors: [this.pk], '#d': [DTAG_SNAP] };
+    let ev: any = null;
+    for (let attempt = 0; attempt < 6 && !ev; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500)); // give relays time to connect
+      try { ev = await this.pool.get(this.relays, filter); } catch { ev = null; }
+    }
     if (!ev) { this.hooks.log('info', 'No account snapshot found — starting fresh.'); return; }
     try {
       const data = JSON.parse(selfDecrypt(this.sk!, this.pk, ev.content));

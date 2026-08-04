@@ -88,6 +88,25 @@ describe('collab protocol', () => {
     expect(N.core.docs[docId].content).toBe('Owner ack.');
   }, 60000);
 
+  it('restores a solo owner\'s docs from the self-snapshot (nobody invited)', async () => {
+    const relay = new FakeRelay();
+    const O = await makeCore(relay);
+    await sleep(50);
+    const docId = O.core.createDoc('Solo notes');
+    await O.core.localEdit(docId, 'private, no collaborators', 'plain');
+    await sleep(2300); // let the debounced self-snapshot publish
+
+    // fresh device, same mnemonic — nothing local, no peers to sync from
+    const N = { hooks: collectHooks() } as any;
+    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0 });
+    await N.core.startWithMnemonic(O.core.mnemonic!);
+    await sleep(200);
+
+    expect(N.core.pk).toBe(O.core.pk);
+    expect(N.core.docs[docId]?.title).toBe('Solo notes');
+    expect(N.core.docs[docId]?.content).toBe('private, no collaborators');
+  }, 30000);
+
   it('rejects an invite whose claimed sender does not match the signed prekey bundle', async () => {
     const relay = new FakeRelay();
     const O = await makeCore(relay), X = await makeCore(relay), Y = await makeCore(relay);

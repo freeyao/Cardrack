@@ -44,21 +44,31 @@ documents never lost, automatic catch-up after offline, device switch without as
 Delivery: ~~anti-entropy sync (periodic version-digest reconciliation; recovers arbitrary
 message loss and offline gaps for LWW state)~~ **done**; still todo: persisted relay cursors,
 per-message resend of intermediate ops (needed only once payloads are CRDT, not LWW). Session
-self-healing (auto re-handshake) **done**. Web Locks single-writer per identity. IndexedDB +
-migration. Encrypted doc index event (new device discovers its docs) **done**. Account:
-mnemonic backup ceremony **done**, restore **done** / QR migration, deviceId support.
+self-healing (auto re-handshake) **done**. ~~Web Locks single-writer per identity~~ **done**
+(global lock; second tab is read-only). ~~IndexedDB + migration~~ **done** (CachedKV: sync
+cache over an async IndexedDB backend, one-time seed from legacy localStorage). Encrypted doc
+index event (new device discovers its docs) **done**. Account: mnemonic backup ceremony
+**done**, restore **done** / QR migration, deviceId support.
 
 **P1 — collaboration core**
 ~~Owner-sequenced commit chain: every edit names its parent; the owner accepts only
 fast-forward commits (CAS on the head) and rejects stale ones, preserving the loser's text
 as a conflict instead of silently clobbering (LWW replaced). Confirmed commits form the
-version chain.~~ **done** — conflict *resolution* is still manual (re-apply / discard) until
-CRDT payloads enable auto-merge. Tiptap+Yjs (rich text, CRDT merge, presence). Version
-history: encrypted update log + epoch-tagged snapshots, timeline/diff/restore, named
-checkpoints. Doc-key epochs + dual-path
-key envelopes (Signal session fast path; NIP-44 recovery path per policy). Signed membership
-credentials; removal → rotation; owner succession by member quorum. Permanent links + knock
-flow. Beyond owner-hub: all-pairs (≤5), then MLS.
+version chain.~~ **superseded by the CRDT core below.** **Document model decided** (see
+[`docs/model.md`](docs/model.md)): ops-as-truth via Yjs, owner-hub (owner is the sequencing +
+snapshot anchor), snapshot-per-epoch at rest, bounded op/checkpoint retention, owner-adjudicated
+rollback (a forward op), and a non-owner **fork-as-exit** right (unilateral, provenance-tracked,
+later merge-requestable). ~~Yjs CRDT core: commits carry Yjs deltas, owner merges + fans out,
+concurrent edits auto-merge (retired `commit-rejected` / manual-conflict); state-vector
+anti-entropy sync.~~ **done**. ~~Manual/real-time editing: manual Commit default + opt-in
+per-doc real-time behind a metadata-warning confirmation.~~ **done**. Next: Tiptap rich text
+via y-prosemirror (structure-aware CRDT merge, presence) — editor is still a textarea over a
+Y.Text. Version history: encrypted update log + epoch-tagged snapshots, timeline/diff/
+restore, named checkpoints. Fork + rollback + merge-request UI. Doc-key epochs + dual-path key
+envelopes (Signal session fast path; NIP-44 recovery path per policy). Signed membership
+credentials; removal → rotation;
+owner succession by member quorum. Permanent links + knock flow. Beyond owner-hub: all-pairs
+(≤5), then MLS.
 
 **P2 — trust polish**
 Safety-number verification UI (TOFU → verified, alarm on key change). Contact nicknames, QR

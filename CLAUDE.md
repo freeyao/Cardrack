@@ -44,35 +44,47 @@ Not audited; a research prototype.
   - `chains.ts` one-time address derivation: `sk_n = sha256(seed || 'sc-addr:'+dir+':' || u32be(n))`
   - `commit.ts` content-addressed commits (`id = hash(parent,author,ts,format,content)`)
   - `lww.ts` version total-order `cmp` (used by anti-entropy sync)
+  - `kv.ts` `CachedKV`: sync `KV` cache over an async `AsyncStore` backend (+ read-only toggle, legacy-seed migration)
   - `app.ts` `CollabCore` orchestrator (transport, invites, ACL, sync, snapshots)
   - `types.ts` `Pool`/`KV`/`Hooks`/`DocState`
-- `app/src/ui/` — thin DOM layer (`main.ts`, `editor.ts`, `sanitize.ts`); calls core only.
+- `app/src/ui/` — thin DOM layer (`main.ts`, `editor.ts`, `sanitize.ts`, `idb.ts` = IndexedDB
+  backend + Web Lock); calls core only.
 - `app/index.html` — dev entry; `npm run build` emits a single-file `dist/index.html`.
 - `legacy/` — the original single-file PoC, kept for reference; not used by the app.
 - Event kinds: `30078` signed prekey bundle, `4078` anonymous envelope
   (`{v,type,body,boot?}`), `30079` NIP-44 self-encrypted account snapshot (doc index).
-  Message types inside envelopes: `invite`/`ack`/`hello`/`commit`/`commit-accepted`/
-  `commit-rejected`/`sync`/`sync-req`.
+  Message types inside envelopes: `invite`/`ack`/`hello`/`update` (editor→owner
+  Yjs delta)/`update-accepted` (owner→members merged delta)/`sync`/`sync-ack`.
 
 ## Current state (see git log for detail)
 
 Working: X3DH+ratchet in browser; mnemonic accounts (create/restore); stateless
 device restore from the phrase; owner-centric invites by npub with signed-prekey
 verification; editor/viewer ACL enforced receiver-side; metadata-private transport;
-**owner-sequenced commit chain with conflict preservation** (replaced LWW);
-**manual commit** (edits are local until the user hits Commit; the draft commits
-against the head it was written on, so a moved document → conflict, not clobber);
-**anti-entropy sync** (periodic version-digest reconciliation + pending-commit
-resend) that self-heals arbitrary message loss / offline gaps; session self-healing
-(auto re-handshake on decrypt failure).
+**Yjs CRDT documents** (`core/ydoc.ts` — ops-as-truth per `docs/model.md`): commits
+carry Yjs binary deltas, the owner merges + fans out (no more CAS-reject/conflict),
+concurrent edits **auto-merge**; content materialized to `DocState.content`, durable
+state in `DocState.ystate`; legacy pre-Yjs docs migrated owner-side into the CRDT;
+**state-vector anti-entropy sync** (`sync`/`sync-ack`, role-gated deltas) self-heals
+arbitrary loss / offline gaps; **dual-mode editing** — manual Commit by default, opt-in
+per-doc real-time (debounced auto-send) behind a strong metadata-warning confirmation;
+session self-healing (auto re-handshake on decrypt failure); **IndexedDB storage** (via
+`CachedKV`, one-time migration from legacy localStorage — no 5MB cap) with a
+**single-writer Web Lock** (a second tab of the same account is read-only, protecting
+the Signal ratchet store).
 
 ## Next (from ROADMAP P0/P1)
 
-IndexedDB + single-writer Web Lock (localStorage cap + multi-tab ratchet hazard);
-then Tiptap+Yjs (real rich text + CRDT auto-merge — upgrades conflict *resolution*
-from manual to automatic); doc-key epochs + dual-path key envelopes; signed
-membership + removal/rotation + owner-succession quorum; permanent links + knock;
-Blossom snapshot storage via a StorageAdapter; beyond owner-hub → MLS.
+The Yjs CRDT core + manual/real-time editing are done (see Current state). **Read
+`docs/model.md` before touching commits/sync/editor** — the model is settled:
+ops-as-truth (Yjs), owner-hub, snapshot-per-epoch at rest, owner-adjudicated
+rollback, non-owner fork-as-exit (unilateral, provenance-tracked). Immediate next:
+**Tiptap rich text** via y-prosemirror (structure-aware CRDT + presence; the editor
+is still a textarea binding to a Y.Text — this swaps in real rich text). Then version
+history (epoch snapshots, timeline/diff/restore, named checkpoints); fork + rollback +
+merge-request; doc-key epochs + dual-path key envelopes; signed membership +
+removal/rotation + owner-succession quorum; permanent links + knock; Blossom snapshot
+storage via a StorageAdapter; beyond owner-hub → MLS.
 
 ## Conventions
 

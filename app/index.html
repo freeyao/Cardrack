@@ -35,6 +35,8 @@
   .pane.readonly{opacity:.75}
   .pane-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .pane-title{font-weight:700;flex:1}
+  .pane-title[title]:hover{text-decoration:underline dotted;text-underline-offset:3px}
+  .title-edit{font-weight:700;font-size:15px;background:var(--bg);color:var(--text);border:1px solid var(--accent);border-radius:6px;padding:3px 8px;flex:1;min-width:120px}
   .badge{font-size:11px;padding:2px 8px;border-radius:20px;background:#1f3d2b;color:var(--ok)}
   .badge.viewer{background:#3d321f;color:var(--warn)}
   .badge.v{background:var(--panel2);color:var(--muted)}
@@ -109,6 +111,7 @@
       <span>me:</span><span class="npub" id="my-npub" title="click to copy">…</span>
       <span class="pkstat" id="prekey-status">initializing…</span>
       <span class="pkstat" id="show-mnemonic" style="cursor:pointer;display:none" title="reveal recovery phrase">🔑 phrase</span>
+      <button id="logout" class="ghost" style="margin-left:auto" title="Sign out and clear this device">Log out</button>
     </div>
     <div class="controls">
       <input type="text" id="doc-title" class="wide" placeholder="new document title…">

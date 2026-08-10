@@ -171,6 +171,15 @@ function openDoc(docId: string) {
   pane.setContent(d.content, d.format, d.version);
   pane.setReadonly(d.myRole === 'viewer' || readOnly);
   if (d.myRole !== 'viewer' && !readOnly) pane.setLive(!!liveModes[docId]);
+  // Owner: click the title to rename it inline (discoverable, no native prompt).
+  if (d.ownerPk === core.pk && !readOnly) {
+    const titleEl = $('pane-doc').querySelector('.pane-title') as HTMLElement | null;
+    if (titleEl) {
+      titleEl.style.cursor = 'pointer';
+      titleEl.title = 'Click to rename';
+      titleEl.addEventListener('click', () => startRename(docId));
+    }
+  }
   renderConflicts(docId);
 }
 
@@ -225,17 +234,36 @@ $('doc-create').addEventListener('click', () => {
   openDoc(id);
   logRow('info', `Created "${title || 'Untitled'}" — invite a collaborator by npub.`);
 });
-$('doc-rename').addEventListener('click', async () => {
-  if (!currentDoc) return;
-  const d = core.docs[currentDoc];
-  if (!d) return;
-  const t = prompt('Rename document', d.title);
-  if (t == null) return; // cancelled
-  await core.renameDoc(currentDoc, t);
-  const nd = core.docs[currentDoc];
-  pane?.setTitle('📄 ' + nd.title);
-  renderDocList();
-});
+$('doc-rename').addEventListener('click', () => { if (currentDoc) startRename(currentDoc); });
+
+/** Inline-rename the open doc: swap the pane title for an input, save on Enter/blur,
+ * cancel on Escape. Owner-only; avoids the fragile native prompt(). */
+function startRename(docId: string) {
+  const d = core.docs[docId];
+  if (!d || d.ownerPk !== core.pk || readOnly) return;
+  const titleEl = $('pane-doc').querySelector('.pane-title') as HTMLElement | null;
+  if (!titleEl) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = d.title;
+  input.className = 'title-edit';
+  let done = false;
+  const finish = async (save: boolean) => {
+    if (done) return; done = true;
+    const nv = input.value.trim();
+    input.replaceWith(titleEl);
+    if (save && nv && nv !== d.title) { await core.renameDoc(docId, nv); renderDocList(); }
+    titleEl.textContent = '📄 ' + (core.docs[docId]?.title ?? d.title);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); void finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); void finish(false); }
+  });
+  input.addEventListener('blur', () => void finish(true));
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
 $('invite-send').addEventListener('click', async () => {
   if (!currentDoc) return;
   const input = $('invite-npub') as HTMLInputElement;
@@ -247,6 +275,20 @@ $('invite-send').addEventListener('click', async () => {
   } catch (e: any) { logRow('warn', 'invite failed: ' + e.message); }
 });
 $('doc-close').addEventListener('click', () => { $('doc-view').classList.add('hidden'); currentDoc = null; renderDocList(); });
+
+$('logout').addEventListener('click', async () => {
+  if (!confirm(
+    'Log out and clear this device?\n\n' +
+    'Your documents stay safe (encrypted) on the network. But this device will be ' +
+    'wiped, and the ONLY way back in is your 12-word recovery phrase — make sure you ' +
+    'have it saved first.'
+  )) return;
+  const btn = $('logout') as HTMLButtonElement;
+  btn.disabled = true; btn.textContent = 'Logging out…';
+  core.stop();
+  try { await storage.clear(); } catch {}
+  location.reload();
+});
 
 window.addEventListener('beforeunload', () => core.stop());
 

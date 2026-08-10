@@ -18,6 +18,7 @@ export interface AsyncStore {
   loadAll(): Promise<Record<string, string>>;
   write(key: string, value: string): void;
   remove?(key: string): void;
+  clear?(): Promise<void>;
 }
 
 export class CachedKV implements KV {
@@ -52,4 +53,10 @@ export class CachedKV implements KV {
   /** Toggle durable persistence. A non-writer tab runs cache-only. */
   setWritable(w: boolean): void { this.writable = w; }
   get isWritable(): boolean { return this.writable; }
+
+  /** Wipe everything — cache and durable backend (used on logout). */
+  async clear(): Promise<void> {
+    this.cache.clear();
+    await this.backend.clear?.();
+  }
 }

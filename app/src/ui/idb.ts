@@ -17,6 +17,9 @@ export class LocalStorageBackend implements AsyncStore {
   }
   write(key: string, value: string): void { try { localStorage.setItem(key, value); } catch {} }
   remove(key: string): void { try { localStorage.removeItem(key); } catch {} }
+  async clear(): Promise<void> {
+    try { for (const k of Object.keys(localStorage)) if (k.startsWith('sc2.')) localStorage.removeItem(k); } catch {}
+  }
 }
 
 /** A durable AsyncStore backed by a single IndexedDB object store, with a
@@ -64,6 +67,16 @@ export class IdbBackend implements AsyncStore {
       if (!db) return this.lsfb().remove(key);
       db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).delete(key);
     }).catch(() => this.lsfb().remove(key));
+  }
+  async clear(): Promise<void> {
+    await this.lsfb().clear(); // also drop any legacy localStorage account data
+    const db = await this.dbp;
+    if (!db) return;
+    await new Promise<void>((resolve) => {
+      const req = db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).clear();
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+    });
   }
 }
 

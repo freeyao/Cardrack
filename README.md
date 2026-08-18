@@ -25,19 +25,24 @@ relays are dumb transport, and any browser can run it. No accounts live on any s
 - **Owner-centric sharing** — create a document, invite collaborators by their
   public key with an `editor` / `viewer` role. Their signed prekey bundle is
   verified before the handshake; the ACL is enforced on the receiving side.
+- **Document management** — create and **rename** documents (click the title to
+  edit it inline); the owner's rename propagates to members.
 - **Metadata-private transport** — every message is sent from a throwaway key to a
   one-time mailbox address derived from a secret shared inside the encrypted
   invite. Relays see only ciphertext between unlinkable addresses.
 - **Self-healing sync** — state-vector anti-entropy reconciliation recovers
   arbitrary message loss / offline gaps; a decrypt failure triggers an automatic
   Signal re-handshake.
-- **Mnemonic accounts** — a 12-word BIP39 phrase *is* the account. No server login.
+- **Mnemonic accounts** — a 12-word BIP39 phrase *is* the account (create, restore,
+  and **log out** — logout wipes the device, and the phrase is the only way back in).
+  No server login.
 - **Stateless client** — a new device restores every document from the phrase
   alone (encrypted account snapshot on the relay); no other member need be online.
-- **Local-first storage** — documents persist in IndexedDB (falling back to
-  `localStorage` where IndexedDB is unavailable, e.g. a single-file build opened
-  over `file://`). A single-writer Web Lock makes a second tab of the same account
-  read-only, protecting the Signal ratchet store.
+- **Local-first storage** — documents persist in IndexedDB, falling back to
+  `localStorage` where IndexedDB is unavailable. A single-writer Web Lock makes a
+  second tab of the same account read-only, protecting the Signal ratchet store.
+- **Runs from a single file** — `npm run build` emits one self-contained
+  `dist/index.html` you can open directly (`file://`), serve, or hand to someone.
 
 See [`ROADMAP.md`](./ROADMAP.md) for positioning, the five design invariants, the
 architecture, and the path to a v1.0 usable by a 2–10 person circle, and
@@ -51,7 +56,7 @@ app/        current source — Vite + TypeScript workspace
   src/ui/   thin DOM layer (editor, IndexedDB backend + Web Lock, sanitizer)
   test/     vitest unit + integration tests (run in Node, no browser)
 legacy/     the original single-file HTML proof of concept (v0.3–v0.4) + LAN serve scripts
-docs/       design notes (model.md — the document model)
+docs/       design notes (model.md — document model; storage.md — storage exploration)
 ROADMAP.md  design invariants, architecture, phased plan
 ```
 
@@ -68,9 +73,11 @@ npm run dev           # local dev server (recommended way to run it)
 npm run build         # single-file dist/index.html (vite-plugin-singlefile)
 ```
 
-Prefer `npm run dev` (or serving the build over HTTP) to opening `dist/index.html`
-directly — over `file://`, some browsers block IndexedDB and Web Locks, so storage
-falls back to `localStorage` and multi-tab protection is unavailable.
+The single-file `dist/index.html` opens directly over `file://` (just double-click
+it) as well as over HTTP. One caveat on `file://`: browsers block IndexedDB and Web
+Locks there, so storage falls back to `localStorage` and the multi-tab read-only
+lock is unavailable — for multi-tab use or day-to-day development, prefer
+`npm run dev` or serving the build over HTTP.
 
 ## Security note
 

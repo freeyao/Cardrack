@@ -290,6 +290,14 @@ $('logout').addEventListener('click', async () => {
   location.reload();
 });
 
+// Offer the single file itself for offline (file://) use. Only meaningful on the
+// built page served over http(s): the dev server's index.html is not standalone,
+// and on file:// the visitor already has the file. import.meta.env.PROD is
+// replaced statically at build time (no import.meta survives into the bundle).
+if (import.meta.env.PROD && location.protocol.startsWith('http')) {
+  $('dl-wrap').style.display = '';
+}
+
 window.addEventListener('beforeunload', () => core.stop());
 
 /** Acquire the single-writer lock, preload storage (migrating any legacy

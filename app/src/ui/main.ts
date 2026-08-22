@@ -1,6 +1,6 @@
 // UI wiring: account gate, doc list/view, logs. All protocol logic is in core/.
 import { SimplePool } from 'nostr-tools/pool';
-import { CollabCore } from '../core/app';
+import { CollabCore, DEFAULT_RELAYS } from '../core/app';
 import { CachedKV } from '../core/kv';
 import { IdbBackend, acquireWriterLock, legacyEntries } from './idb';
 import { EditorPane } from './editor';
@@ -276,6 +276,72 @@ $('invite-send').addEventListener('click', async () => {
 });
 $('doc-close').addEventListener('click', () => { $('doc-view').classList.add('hidden'); currentDoc = null; renderDocList(); });
 
+/* ---------- relay customization ----------
+ * The list is a local preference (sc2.relays) read at boot; a circle can point
+ * at its own relay without a rebuild. Changes apply via save-and-reload — a full
+ * reboot is simpler and more reliable than partially resubscribing everything. */
+const RELAYS_KEY = 'sc2.relays';
+function storedRelays(): string[] {
+  try {
+    const r = JSON.parse(storage.get(RELAYS_KEY) || '[]');
+    if (Array.isArray(r) && r.length && r.every((u) => typeof u === 'string')) return r;
+  } catch {}
+  return [...DEFAULT_RELAYS];
+}
+
+let relayDraft: string[] = [];
+/** Health probe: can we open a WebSocket to this relay from here? */
+function pingRelay(url: string): Promise<boolean> {
+  return new Promise((res) => {
+    let ws: WebSocket | null = null;
+    const t = setTimeout(() => { try { ws?.close(); } catch {} res(false); }, 4000);
+    try { ws = new WebSocket(url); } catch { clearTimeout(t); res(false); return; }
+    ws.onopen = () => { clearTimeout(t); try { ws!.close(); } catch {} res(true); };
+    ws.onerror = () => { clearTimeout(t); res(false); };
+  });
+}
+function renderRelayList() {
+  const el = $('relay-list');
+  el.innerHTML = relayDraft.map((u, i) =>
+    `<div class="relay-row"><span data-dot="${i}" style="color:var(--muted)" title="checking…">●</span><span class="u">${escapeHtml(u)}</span><button class="ghost" data-rm="${i}" title="remove">✕</button></div>`
+  ).join('') || '<p class="hint">No relays — add one below.</p>';
+  el.querySelectorAll('button[data-rm]').forEach((b) => b.addEventListener('click', () => {
+    relayDraft.splice(Number((b as HTMLElement).dataset.rm), 1);
+    renderRelayList();
+  }));
+  relayDraft.forEach((u, i) => void pingRelay(u).then((ok) => {
+    const d = el.querySelector(`[data-dot="${i}"]`) as HTMLElement | null;
+    if (d) { d.style.color = ok ? 'var(--ok)' : 'var(--danger)'; d.title = ok ? 'reachable' : 'unreachable from here'; }
+  }));
+}
+function openRelayModal() {
+  relayDraft = storedRelays();
+  $('relay-err').textContent = '';
+  ($('relay-add-url') as HTMLInputElement).value = '';
+  renderRelayList();
+  $('relay-modal').classList.remove('hidden');
+}
+$('show-relays').addEventListener('click', openRelayModal);
+$('gate-relays').addEventListener('click', openRelayModal);
+$('relay-cancel').addEventListener('click', () => $('relay-modal').classList.add('hidden'));
+$('relay-reset').addEventListener('click', () => { relayDraft = [...DEFAULT_RELAYS]; renderRelayList(); });
+$('relay-add').addEventListener('click', () => {
+  const input = $('relay-add-url') as HTMLInputElement;
+  const u = input.value.trim().replace(/\/+$/, '');
+  if (!/^wss?:\/\/[^\s]+$/i.test(u)) { $('relay-err').textContent = 'Relay URLs start with wss:// (or ws:// for localhost).'; return; }
+  if (relayDraft.includes(u)) { $('relay-err').textContent = 'Already in the list.'; return; }
+  relayDraft.push(u);
+  input.value = '';
+  $('relay-err').textContent = '';
+  renderRelayList();
+});
+$('relay-save').addEventListener('click', () => {
+  if (!relayDraft.length) { $('relay-err').textContent = 'Keep at least one relay.'; return; }
+  if (readOnly) { $('relay-err').textContent = 'This tab is read-only — change relays from the writer tab.'; return; }
+  storage.set(RELAYS_KEY, JSON.stringify(relayDraft));
+  location.reload();
+});
+
 $('logout').addEventListener('click', async () => {
   if (!confirm(
     'Log out and clear this device?\n\n' +
@@ -318,6 +384,8 @@ async function setup() {
     logRow('warn', 'storage unavailable — continuing without persistence: ' + e.message);
   }
   if (readOnly) logRow('warn', 'Cardrack is already open in another tab — this tab is read-only.');
+  // Apply the user's relay list (needs storage loaded; must precede boot).
+  core.relays = storedRelays();
   await gate();
 }
 

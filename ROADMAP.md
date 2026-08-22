@@ -76,9 +76,10 @@ invites. NIP-59 gift-wrapped invites (last metadata leak). Restore one-time prek
 consumption + signed-prekey rotation.
 
 **P3 — productization**
-Doc management (rename **done**; archive/export md-docx). **Relay customization**: per-account
-relay list editable in the UI (add/remove relays, connection health), so a circle can point at
-its own relay without a rebuild — pairs with the self-hosted relay+storage docker guide.
+Doc management (rename **done**; archive/export md-docx). ~~Relay customization: relay list
+editable in the UI (add/remove, per-relay health probe), from both the account gate and the
+id bar, so a circle can point at its own relay without a rebuild~~ **done** — pairs with the
+still-todo self-hosted relay+storage docker guide.
 Encrypted attachments (chunked to storage, uniform sizes). Notifications. Mobile UI, i18n.
 Hardening: dependency pinning, reproducible build, CSP, envelope-parser fuzzing, external
 review of the address-chain construction.

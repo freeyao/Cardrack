@@ -30,6 +30,9 @@ relays are dumb transport, and any browser can run it. No accounts live on any s
 - **Metadata-private transport** — every message is sent from a throwaway key to a
   one-time mailbox address derived from a secret shared inside the encrypted
   invite. Relays see only ciphertext between unlinkable addresses.
+- **Custom relays** — edit the relay list in the app (📡 relays, with a per-relay
+  health probe), from the account gate too, so a circle can run its own relay —
+  no rebuild needed.
 - **Self-healing sync** — state-vector anti-entropy reconciliation recovers
   arbitrary message loss / offline gaps; a decrypt failure triggers an automatic
   Signal re-handshake.

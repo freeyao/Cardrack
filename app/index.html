@@ -79,6 +79,10 @@
   .modal .warn-text b{color:var(--text)}
   .modal-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text);margin:12px 0}
   .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  .relay-row{display:flex;gap:8px;align-items:center;padding:4px 0;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace}
+  .relay-row .u{flex:1;word-break:break-all}
+  .relay-row button{padding:2px 8px;font-size:12px}
+  .modal code{background:var(--panel2);border-radius:4px;padding:1px 5px}
   .hidden{display:none!important}
 </style>
 </head>
@@ -103,6 +107,7 @@
       <textarea id="acct-restore-words" class="editor-plain" style="min-height:56px" placeholder="…or paste your 12 recovery words here to restore an existing account"></textarea>
       <button id="acct-restore" class="ghost" style="margin-top:6px">Restore account</button>
       <div class="hint" id="acct-err" style="color:var(--danger)"></div>
+      <div class="hint" id="gate-relays" style="margin-top:10px;cursor:pointer">📡 Restoring a circle that uses its own relay? <u>Configure relays</u></div>
     </div>
   </div>
 
@@ -112,6 +117,7 @@
       <span>me:</span><span class="npub" id="my-npub" title="click to copy">…</span>
       <span class="pkstat" id="prekey-status">initializing…</span>
       <span class="pkstat" id="show-mnemonic" style="cursor:pointer;display:none" title="reveal recovery phrase">🔑 phrase</span>
+      <span class="pkstat" id="show-relays" style="cursor:pointer" title="configure relays">📡 relays</span>
       <button id="logout" class="ghost" style="margin-left:auto" title="Sign out and clear this device">Log out</button>
     </div>
     <div class="controls">
@@ -135,6 +141,24 @@
     <div class="log" id="collab-log"></div>
     <p class="hint">Create a document → invite by npub (their signed prekey bundle is verified before the Signal handshake) → collaborate. Relays only ever see ciphertext between unlinkable one-time addresses.</p>
     <p class="hint" id="dl-wrap" style="display:none">⬇ <a id="dl-offline" href="index.html" download="cardrack.html" style="color:var(--accent)">Download an offline copy</a> — this whole app is one file; the copy runs anywhere, even double-clicked from a USB stick.</p>
+  </div>
+
+  <div id="relay-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h3>📡 Relays</h3>
+      <p>Your messages travel through these Nostr relays — always as ciphertext between unlinkable addresses. Everyone in a circle needs <b>at least one relay in common</b>. On the hosted (https) page only <code>wss://</code> relays work; <code>ws://</code> is for localhost testing.</p>
+      <div id="relay-list"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="relay-add-url" class="wide" placeholder="wss://your.relay.example">
+        <button id="relay-add" class="ghost">Add</button>
+      </div>
+      <p class="hint" id="relay-err" style="color:var(--danger)"></p>
+      <div class="modal-actions">
+        <button id="relay-reset" class="ghost">Reset to defaults</button>
+        <button id="relay-cancel" class="ghost">Cancel</button>
+        <button id="relay-save" class="primary">Save &amp; reload</button>
+      </div>
+    </div>
   </div>
 
   <div id="live-modal" class="modal-backdrop hidden">

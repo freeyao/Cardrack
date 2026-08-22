@@ -35,5 +35,10 @@ function fileProtocolCompat(outDir = 'dist') {
 export default defineConfig({
   plugins: [viteSingleFile(), fileProtocolCompat()],
   build: { target: 'es2020', outDir: 'dist' },
-  test: { environment: 'node', globals: false },
+  // fileParallelism off: the suite mixes CPU-heavy crypto (scrypt in the NIP-49
+  // import tests) with timing-sensitive sync tests that use real-clock sleeps —
+  // running files concurrently starves the timers and flakes, locally and worse
+  // on 2-core CI (which gates the Pages deploy). Single files stay fast via
+  // `npx vitest run test/<file>`.
+  test: { environment: 'node', globals: false, fileParallelism: false },
 });

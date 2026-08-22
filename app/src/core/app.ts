@@ -17,6 +17,7 @@ import type { Doc as YDoc } from 'yjs';
 import {
   generateMnemonic, validateMnemonic, skFromMnemonic, pkFromSk, selfEncrypt, selfDecrypt,
 } from './account';
+import { newDocKey } from './dockey';
 import { enc, dec, now, short, hexFromBytes, bytesFromHex, b64FromBuf } from './util';
 import type { Pool, KV, Hooks, DocState } from './types';
 
@@ -396,7 +397,20 @@ export class CollabCore {
     if (m.t === 'sync') return void this.onSync(from, m);
     if (m.t === 'sync-ack') return void this.onSyncAck(from, m);
     if (m.t === 'rename') return this.onRename(from, m);        // owner → members: title change
+    if (m.t === 'key-envelope') return this.onKeyEnvelope(from, m); // owner → members: epoch key
     this.hooks.log('info', 'unknown message type ' + m.t);
+  }
+
+  // ---- member: the owner distributed a doc-key epoch ----
+  private onKeyEnvelope(from: string, m: any) {
+    const doc = this.docs[m.docId];
+    if (!doc) return;
+    if (from !== doc.ownerPk) return this.hooks.log('warn', `REJECTED key-envelope not from owner (${short(from, 12)})`);
+    if (typeof m.epoch !== 'number' || typeof m.key !== 'string') return this.hooks.log('warn', 'malformed key-envelope');
+    doc.dockeys = { ...(doc.dockeys || {}), [String(m.epoch)]: m.key }; // keep old epochs readable
+    if (!doc.epoch || m.epoch > doc.epoch) doc.epoch = m.epoch;
+    this.saveAll();
+    this.hooks.log('ok', `"${doc.title}" advanced to key epoch ${m.epoch}`);
   }
 
   // ---- member: the owner renamed the doc ----
@@ -420,6 +434,12 @@ export class CollabCore {
       version: d.version || 0, ts: d.ts || 0, author: d.author || '',
       ystate: d.ystate || undefined, head: '', history: [], conflicts: [],
     };
+    // The owner sent the current epoch key inside the (Signal-encrypted) invite.
+    if (typeof m.epoch === 'number' && typeof m.dockey === 'string') {
+      const doc = this.docs[m.docId];
+      doc.epoch = m.epoch;
+      doc.dockeys = { [String(m.epoch)]: m.dockey };
+    }
     if (d.ystate) this.materialize(m.docId); // build the Yjs doc from the seeded state
     this.saveAll();
     this.hooks.docsChanged();
@@ -540,10 +560,32 @@ export class CollabCore {
     }
   }
 
+  /** Rotate the doc key: owner-only, epoch+1 with a fresh random key (invariant
+   * #2). Old epochs are kept so earlier snapshots stay readable; a removed
+   * member (future) simply never receives the new one. Also the upgrade path
+   * for a legacy doc without an epoch — its first rotation mints epoch 1. */
+  async rotateDocKey(docId: string) {
+    if (!this.mutable()) return;
+    const doc = this.docs[docId];
+    if (!doc) return;
+    if (doc.ownerPk !== this.pk) return this.hooks.log('warn', 'only the owner can rotate the doc key');
+    const epoch = (doc.epoch || 0) + 1;
+    doc.epoch = epoch;
+    doc.dockeys = { ...(doc.dockeys || {}), [String(epoch)]: newDocKey() };
+    this.saveAll();
+    this.hooks.log('ok', `"${doc.title}" rotated to key epoch ${epoch}`);
+    for (const mem of doc.members) {
+      try { await this.sendTo(mem.pk, { t: 'key-envelope', docId, epoch, key: doc.dockeys[String(epoch)] }); }
+      catch (e: any) { this.hooks.log('warn', `key-envelope to ${short(mem.pk, 12)} failed: ${e.message}`); }
+    }
+  }
+
   createDoc(title: string): string {
     if (!this.mutable()) return '';
     const docId = hexFromBytes(crypto.getRandomValues(new Uint8Array(8)));
-    this.docs[docId] = { title: title || 'Untitled', ownerPk: this.pk, myRole: 'owner', members: [], content: '', format: 'plain', version: 0, ts: 0, author: '', ystate: undefined, head: '', history: [], conflicts: [] };
+    // Epoch 1 minted at creation: a fresh random doc key (invariant #2). It rides
+    // in DocState, so the NIP-44 account snapshot carries it to a restored device.
+    this.docs[docId] = { title: title || 'Untitled', ownerPk: this.pk, myRole: 'owner', members: [], content: '', format: 'plain', version: 0, ts: 0, author: '', ystate: undefined, head: '', history: [], conflicts: [], epoch: 1, dockeys: { '1': newDocKey() } };
     this.ydocFor(docId); // initialize an empty Yjs doc
     this.saveAll();
     this.hooks.docsChanged();
@@ -564,7 +606,11 @@ export class CollabCore {
     try {
       const hasChain = !!this.chains[peerPk];
       const seed = hasChain ? this.chains[peerPk].seed : b64FromBuf(crypto.getRandomValues(new Uint8Array(32)).buffer as ArrayBuffer);
-      await this.sendTo(peerPk, { t: 'invite', from: this.pk, seed, docId, title: doc.title, role, members: [], doc: this.docSnapshot(doc) });
+      // The invite travels Signal-encrypted, so the current epoch key rides along
+      // (fast path); legacy docs without an epoch send none. Old epochs are not
+      // shared — a new member reads from their joining epoch forward.
+      const dockey = doc.epoch ? doc.dockeys?.[String(doc.epoch)] : undefined;
+      await this.sendTo(peerPk, { t: 'invite', from: this.pk, seed, docId, title: doc.title, role, members: [], doc: this.docSnapshot(doc), epoch: doc.epoch, dockey });
       if (!hasChain) this.setupChain(peerPk, seed, true);
       this.hooks.log('ok', `Invite sent to ${short(peerPk, 16)} as ${role}.`);
     } catch (e) {

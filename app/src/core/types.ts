@@ -24,6 +24,10 @@ export interface DocState {
   content: string; format: 'plain' | 'rich';
   version: number; ts: number; author: string;
   ystate?: string;       // base64 of the Yjs doc state (encodeStateAsUpdate)
+  // Doc-key epochs (owner-minted, rotated on membership change). Old epochs are
+  // kept so earlier snapshots stay readable. String keys: JSON round-trips.
+  epoch?: number;                    // current epoch (1-based); absent on legacy docs
+  dockeys?: Record<string, string>;  // epoch (as string) → key (base64, 32 random bytes)
   head: string;          // legacy commit-chain field, retained for compatibility ('' now)
   history?: Commit[];    // retained; unused by the Yjs path
   conflicts?: Commit[];  // retained for UI compatibility; the CRDT path leaves this empty

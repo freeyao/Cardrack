@@ -72,7 +72,9 @@ owner succession by member quorum. Permanent links + knock flow. Beyond owner-hu
 
 **P2 — trust polish**
 Safety-number verification UI (TOFU → verified, alarm on key change). Contact nicknames, QR
-invites. NIP-59 gift-wrapped invites (last metadata leak). Restore one-time prekey
+invites. ~~Account import: bare nsec / 64-hex / NIP-49 ncryptsec (password-protected) at the
+gate; imported accounts have no phrase — the nsec is the recovery secret~~ **done**. NIP-59
+gift-wrapped invites (last metadata leak). Restore one-time prekey
 consumption + signed-prekey rotation.
 
 **P3 — productization**

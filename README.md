@@ -38,7 +38,9 @@ relays are dumb transport, and any browser can run it. No accounts live on any s
   Signal re-handshake.
 - **Mnemonic accounts** — a 12-word BIP39 phrase *is* the account (create, restore,
   and **log out** — logout wipes the device, and the phrase is the only way back in).
-  No server login.
+  No server login. Existing nostr identities can be **imported**: bare `nsec`, raw
+  hex, or password-protected NIP-49 `ncryptsec` (an imported account has no phrase;
+  its nsec is the recovery secret).
 - **Stateless client** — a new device restores every document from the phrase
   alone (encrypted account snapshot on the relay); no other member need be online.
 - **Local-first storage** — documents persist in IndexedDB, falling back to

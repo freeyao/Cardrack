@@ -191,11 +191,19 @@ function showApp() {
   $('my-npub').addEventListener('click', () => { navigator.clipboard?.writeText(npub).then(() => logRow('info', 'npub copied')); });
   loadLiveModes();
   applyReadOnly();
+  // Reveal the recovery secret: the 12-word phrase, or for imported accounts
+  // (no mnemonic) the nsec itself.
   const mn = storage.get('sc2.mnemonic');
+  const sm = $('show-mnemonic');
+  sm.style.display = '';
   if (mn) {
-    const sm = $('show-mnemonic');
-    sm.style.display = '';
     sm.addEventListener('click', () => { if (confirm('Reveal your 12-word recovery phrase on screen?')) alert(mn); });
+  } else {
+    sm.textContent = '🔑 nsec';
+    sm.title = 'reveal secret key';
+    sm.addEventListener('click', () => {
+      if (confirm('Reveal your secret key (nsec) on screen? Anyone who sees it owns this account.')) alert(core.nsec() || '');
+    });
   }
   renderDocList();
 }
@@ -222,6 +230,19 @@ async function gate() {
     if (!CollabCore.validateMnemonic(w)) { $('acct-err').textContent = 'That is not a valid 12-word recovery phrase.'; return; }
     await core.startWithMnemonic(w);
     showApp();
+  });
+  // Import an existing nostr key. The password field appears only for NIP-49
+  // (ncryptsec) keys — a bare nsec has no password protection.
+  const nsecInput = $('acct-nsec') as HTMLInputElement;
+  const nsecPw = $('acct-nsec-pw') as HTMLInputElement;
+  nsecInput.addEventListener('input', () => {
+    nsecPw.classList.toggle('hidden', !nsecInput.value.trim().startsWith('ncryptsec1'));
+  });
+  $('acct-import').addEventListener('click', async () => {
+    try {
+      await core.startWithNsec(nsecInput.value, nsecPw.value || undefined);
+      showApp();
+    } catch (e: any) { $('acct-err').textContent = e.message; }
   });
 }
 

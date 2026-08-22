@@ -2,6 +2,7 @@
 // pool/storage/hooks/sanitizer. All protocol logic lives here.
 import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent } from 'nostr-tools/pure';
 import * as nip19 from 'nostr-tools/nip19';
+import { decrypt as nip49decrypt } from 'nostr-tools/nip49';
 import {
   SignalProtocolAddress, SessionBuilder, SessionCipher,
   ensureSignalIdentity, serializeBundle, deserializeBundle, WireBundle,
@@ -100,11 +101,40 @@ export class CollabCore {
     this.restoring = true;
     await this.boot();
   }
+  /** Import an existing nostr key: nsec1…, 64-hex, or NIP-49 ncryptsec1… (+
+   * password). No mnemonic exists for an imported key — the nsec itself is the
+   * recovery secret (nsec() re-encodes it for the reveal UI). Boots in restore
+   * mode: the identity may have used the app before, so fetch its snapshot. */
+  async startWithNsec(key: string, password?: string) {
+    const s = key.trim();
+    let sk: Uint8Array;
+    if (s.startsWith('ncryptsec1')) {
+      if (!password) throw new Error('this key is password-protected (NIP-49) — enter its password');
+      try { sk = nip49decrypt(s, password); } catch { throw new Error('could not decrypt — wrong password?'); }
+    } else if (s.startsWith('nsec1')) {
+      const d = nip19.decode(s);
+      if (d.type !== 'nsec') throw new Error('not an nsec key');
+      sk = d.data as Uint8Array;
+    } else if (/^[0-9a-f]{64}$/i.test(s)) {
+      sk = bytesFromHex(s.toLowerCase());
+    } else {
+      throw new Error('paste an nsec1…, ncryptsec1…, or 64-hex secret key');
+    }
+    this.sk = sk;
+    this.mnemonic = null;
+    this.storage.set(LS.nsk, hexFromBytes(sk));
+    this.storage.set(LS.mnemonic, ''); // no phrase for imported keys
+    this.restoring = true;
+    await this.boot();
+  }
+  /** The account key as nsec — the recovery secret for imported accounts. */
+  nsec() { return this.sk ? nip19.nsecEncode(this.sk) : null; }
+
   async startWithSaved() {
     const hex = this.storage.get(LS.nsk);
     if (!hex) throw new Error('no saved account');
     this.sk = bytesFromHex(hex);
-    this.mnemonic = this.storage.get(LS.mnemonic);
+    this.mnemonic = this.storage.get(LS.mnemonic) || null;
     await this.boot();
   }
 

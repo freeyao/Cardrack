@@ -12,54 +12,63 @@ and any browser can run it. No accounts live on any server.
 > Status: research prototype (v0.5). The cryptographic core is real; the system is
 > **not audited**. Do not use for anything that actually needs to stay secret yet.
 
-## What works today, by module
+## What works today
 
-The project is organized into nine modules — see [`docs/modules.md`](./docs/modules.md)
-for the full map, the file seams, and what's next in each.
+- **Real Signal protocol in the browser** — X3DH key agreement + Double Ratchet,
+  via `@privacyresearch/libsignal-protocol-typescript`.
+- **Documents that merge themselves** — documents are Yjs CRDTs: concurrent
+  edits **auto-merge** instead of overwriting each other; the owner sequences
+  and fans out changes (see [`docs/model.md`](./docs/model.md)).
+- **Manual + opt-in real-time editing** — by default edits stay on your device
+  until you hit **Commit**; per document you can switch on real-time sync
+  (edits stream as you type), gated behind a confirmation that spells out the
+  metadata trade-off (relays can see edit timing, though never the text).
+- **Owner-centric sharing** — invite collaborators by their public key with an
+  `editor` / `viewer` role. Their signed prekey bundle is verified before the
+  handshake; the ACL is enforced on the receiving side.
+- **Document management** — create and rename documents (click the title to
+  edit it inline); the owner's rename propagates to members.
+- **Per-document key epochs** — owner-minted random content keys with rotation
+  and encrypted distribution; groundwork for the decided key-custody model
+  (the service never holds doc keys).
+- **Metadata-private transport** — every message is sent from a throwaway key
+  to a one-time mailbox address derived from a secret shared inside the
+  encrypted invite. Relays see only ciphertext between unlinkable addresses,
+  and the relay list is yours to configure (with per-relay health probes).
+- **Self-healing sync** — state-vector anti-entropy recovers arbitrary message
+  loss and offline gaps; a decrypt failure triggers an automatic re-handshake.
+- **Mnemonic accounts** — a 12-word BIP39 phrase *is* the account (create,
+  restore, and **log out** — logout wipes the device, and the phrase is the
+  only way back in). No server login. Existing nostr identities can be
+  **imported**: bare `nsec`, raw hex, or password-protected NIP-49 `ncryptsec`
+  (an imported account has no phrase; its nsec is the recovery secret).
+- **Stateless client** — a new device restores every document from the phrase
+  alone (encrypted account snapshot on the relay); no other member need be online.
+- **Local-first storage** — documents persist in IndexedDB (falling back to
+  `localStorage` where IndexedDB is unavailable). A single-writer Web Lock
+  makes a second tab of the same account read-only, protecting the Signal
+  ratchet store.
+- **Runs from a single file** — `npm run build` emits one self-contained
+  `dist/index.html` you can open directly (`file://`), serve, or download as an
+  offline copy from the deployed page itself.
 
-**1 · Identity** — a 12-word BIP39 phrase *is* the account: create it with a
-backup ceremony, restore from the phrase alone, reveal it later, log out with a
-device wipe. Existing nostr identities import too: bare `nsec`, raw hex, or
-password-protected NIP-49 `ncryptsec` (imported accounts have no phrase — the
-nsec itself is the recovery secret).
+## For developers: the module map
 
-**2 · Files** — create and rename documents (click the title to edit it inline;
-the owner's rename propagates to members), a doc list, and an encrypted doc
-index so a new device rediscovers everything.
+Development is organized into nine modules with 1:1 file seams — demands are
+named by module, features branch by module. The full map (what each module
+owns, what's done, what's next) lives in [`docs/modules.md`](./docs/modules.md):
 
-**3 · Editor** — plain and basic rich text. Manual **Commit** by default:
-nothing leaves your device until you say so. Per-document opt-in real-time
-sync, gated behind a confirmation that spells out the metadata trade-off
-(relays can see edit timing, never the text).
-
-**4 · Conclave** — owner-centric sharing: invite by npub with an `editor` /
-`viewer` role. The inviter's signed prekey bundle is verified before the
-handshake; the ACL is enforced on the receiving side.
-
-**5 · Sync** — documents are Yjs CRDTs: concurrent edits **auto-merge** instead
-of clobbering, with the owner sequencing and fanning out changes. State-vector
-anti-entropy recovers arbitrary message loss and offline gaps; a decrypt
-failure triggers an automatic re-handshake.
-
-**6 · Keys** — real Signal protocol in the browser (X3DH + Double Ratchet via
-libsignal). Per-document key epochs: owner-minted random keys, rotation with
-encrypted distribution — groundwork for the decided key-custody model (the
-service never holds doc keys; see [`docs/model.md`](./docs/model.md)).
-
-**7 · Transport** — metadata-private by construction: every message is sent
-from a throwaway key to a one-time mailbox address derived from a secret shared
-inside the encrypted invite. Relays see only ciphertext between unlinkable
-addresses. The relay list is user-configurable, with per-relay health probes.
-
-**8 · Storage** — local-first: IndexedDB behind a synchronous cache (with
-localStorage fallback where IndexedDB is unavailable), one-time migration, and
-a single-writer Web Lock — a second tab of the same account is read-only,
-protecting the Signal ratchet store.
-
-**9 · Distribution** — the whole app is one self-contained `dist/index.html`:
-open it directly over `file://`, serve it anywhere, or download an offline copy
-from the deployed page itself. GitHub Pages deploys `main` on every push, gated
-on the test suite.
+| # | Module | Owns |
+|---|--------|------|
+| 1 | Identity | who *you* are (accounts, import, logout) |
+| 2 | Files | document lifecycle |
+| 3 | Editor | the editing surface |
+| 4 | Conclave | who is in the group, what they may do |
+| 5 | Sync | convergence of state (CRDT, anti-entropy) |
+| 6 | Keys | cryptography & custody |
+| 7 | Transport | wire + metadata privacy |
+| 8 | Storage | where bytes rest |
+| 9 | Distribution | how the app reaches people |
 
 See [`ROADMAP.md`](./ROADMAP.md) for positioning, the five design invariants,
 and the phased plan; [`docs/model.md`](./docs/model.md) for the settled document

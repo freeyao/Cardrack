@@ -22,6 +22,10 @@ documents never lost, automatic catch-up after offline, device switch without as
 3. **Stateless client.** Any device holding the account opens every document: encrypted doc
    index + key envelopes + snapshots all live on the network as ciphertext. Local storage is
    cache. Only ratchet state is device-local and unrecoverable — by design, per device.
+   *(Future rewrite decided 2026-08-22, current behavior unchanged: content ciphertext may
+   live online but doc keys never do — recovery = account key + locally-held/peer-redelivered
+   keys; the mnemonic alone restores identity + membership, not documents. See
+   [`docs/model.md`](docs/model.md) §Key custody.)*
 4. **Link locates, invitation authorizes.** `#/doc/<docId>/<owner>` sends a knock to the
    owner; optional per-doc capability key enables link-read. docId never changes; rekeys
    don't break links.
@@ -64,8 +68,12 @@ anti-entropy sync.~~ **done**. ~~Manual/real-time editing: manual Commit default
 per-doc real-time behind a metadata-warning confirmation.~~ **done**. Next: Tiptap rich text
 via y-prosemirror (structure-aware CRDT merge, presence) — editor is still a textarea over a
 Y.Text. Version history: encrypted update log + epoch-tagged snapshots, timeline/diff/
-restore, named checkpoints. Fork + rollback + merge-request UI. Doc-key epochs + dual-path key
-envelopes (Signal session fast path; NIP-44 recovery path per policy). Signed membership
+restore, named checkpoints. Fork + rollback + merge-request UI. Doc-key epochs + key custody:
+model decided (docs/model.md §Key custody — the service never holds doc keys; two-factor
+recovery = account key + local/peer-redelivered keys; "balanced" becomes per-circle opt-in);
+foundation (epoch keys, owner rotation, AES-GCM sealing, NIP-44 recovery helpers) implemented
+on branch `epoch`, awaiting merge; the policy switch + recovery-path wiring + key-export
+ceremony ship together later. Signed membership
 credentials; removal → rotation;
 owner succession by member quorum. Permanent links + knock flow. Beyond owner-hub: all-pairs
 (≤5), then MLS.

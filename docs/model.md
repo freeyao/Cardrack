@@ -99,3 +99,39 @@ temporarily and converge later.
   optional `merge-request` (fork → main, owner-adjudicated).
 - `DocState`: gains serialized Yjs state, a bounded op/checkpoint ring, epoch tag,
   and a fork-provenance field (parent docId + forked-from commit id).
+
+## Key custody & recovery (decided 2026-08-22)
+
+Direction decided with the owner. The current implementation — "balanced by
+construction": doc keys ride inside the NIP-44 account snapshot, so the mnemonic
+alone recovers everything — intentionally **stays as-is** until the storage work
+lands. This section is the target model.
+
+- **Ciphertext may live online; keys may not.** Content at rest is sealed under
+  the per-epoch doc key (`dockey.ts` sealDoc). The service (relays / storage)
+  holds ciphertext and signaling only — never a doc key in any form the account
+  key alone can open.
+- **The account snapshot carries metadata only**: doc index, address chains,
+  membership. No content, no doc keys. The mnemonic alone restores identity and
+  the circle map — not documents.
+- **Recovery is two-factor**: the account key (identity — locates ciphertext,
+  receives envelopes) PLUS doc-key material the service never held. That material
+  comes from: local storage, re-delivery by any circle member over Signal
+  (`key-envelope`), or a user-exported encrypted key container (see
+  [storage.md](storage.md) — the container idea is the portable local half).
+- **Loss is real, and accepted**: a solo member who loses every local copy and
+  never exported a container has lost the document — even though its ciphertext
+  sits online. No third-party copy exists that the user doesn't know about. The
+  UX must say this out loud: a key-export ceremony, sibling of the mnemonic one.
+- **Circles degrade gracefully**: any surviving member restores both keys and
+  content to a rejoining device (key-envelope + anti-entropy sync). "Everyone
+  lost it" is the only true loss.
+- **"Balanced" becomes an explicit opt-in per circle** (invariant #1's exception
+  turned into a real policy switch): wrap doc keys to members' account pks online
+  for phrase-only recovery — convenience vs. blast radius, chosen knowingly.
+- Epoch mechanics folded in: an invite carries the **current epoch key only** (an
+  owner-side "also share history" option may come later); the NIP-44
+  recovery-path wiring ships together with this policy work, not before.
+- Note: this narrows invariant #3's "everything lives on the network as
+  ciphertext". The *stateless client* property shrinks to identity + membership;
+  content statelessness becomes the user's own storage choice.

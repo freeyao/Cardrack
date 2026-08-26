@@ -28,7 +28,10 @@ export const KIND_ENVELOPE = 4078;
 export const DTAG = 'cardrack-prekeys-v1';
 export const DTAG_SNAP = 'sc-docs-v1';
 export const ADDR_WINDOW = 16;
-export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
+// relay.nostr.band replaced with primal: live probing showed it timing out on
+// every operation while damus intermittently rate-limits — three defaults must
+// not quietly degrade to one.
+export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
 
 const LS = { nsk: 'sc2.nsk', mnemonic: 'sc2.mnemonic', signal: 'sc2.signal', docs: 'sc2.docs', seen: 'sc2.seen', chains: 'sc2.chains' };
 
@@ -66,6 +69,12 @@ export class CollabCore {
   snapTimer: any = null;
   syncTimer: any = null;
   syncIntervalMs: number;
+  bootSub: { close(): void } | null = null;
+  /** Signed events no relay accepted yet; retried until delivered (bounded). */
+  outbox: { ev: any; tries: number }[] = [];
+  private lastSnapPublish = 0;
+  private lastSnapHash = '';
+  private syncTick = 0;
 
   constructor(o: CoreOpts) {
     this.pool = o.pool; this.storage = o.storage; this.hooks = o.hooks;
@@ -79,6 +88,24 @@ export class CollabCore {
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null; }
     if (this.snapTimer) { clearTimeout(this.snapTimer); this.snapTimer = null; }
     if (this.chainSub) { try { this.chainSub.close(); } catch {} this.chainSub = null; }
+    if (this.bootSub) { try { this.bootSub.close(); } catch {} this.bootSub = null; }
+  }
+
+  private subscribeBoot() {
+    if (this.bootSub) { try { this.bootSub.close(); } catch {} }
+    this.bootSub = this.pool.subscribe(this.relays, { kinds: [KIND_ENVELOPE], '#p': [this.pk] }, {
+      onevent: (ev) => { this.onBootEnvelope(ev).catch((e) => this.hooks.log('warn', 'boot handler: ' + e.message)); },
+    });
+  }
+
+  /** Re-open every subscription and reconcile — recovers from silently dropped
+   * relay sockets (sleep/wake, network switch). Cheap: relays replay stored
+   * events on re-subscribe and `seen` dedupes them. */
+  refreshSubscriptions() {
+    this.subscribeBoot();
+    this.resubscribeChains();
+    this.flushOutbox();
+    void this.syncAllPeers();
   }
 
   /* ---------- account lifecycle ---------- */
@@ -154,9 +181,7 @@ export class CollabCore {
     this.saveAll();
 
     await this.publishPrekeys();
-    this.pool.subscribe(this.relays, { kinds: [KIND_ENVELOPE], '#p': [this.pk] }, {
-      onevent: (ev) => { this.onBootEnvelope(ev).catch((e) => this.hooks.log('warn', 'boot handler: ' + e.message)); },
-    });
+    this.subscribeBoot();
     this.resubscribeChains();
     if (this.restoring) await this.restoreFromSnapshot();
     this.muteSnap = false;
@@ -164,7 +189,15 @@ export class CollabCore {
     // then on a timer. Disabled when syncIntervalMs is 0 (tests drive it manually).
     void this.syncAllPeers();
     if (this.syncIntervalMs > 0) {
-      this.syncTimer = setInterval(() => { void this.syncAllPeers(); }, this.syncIntervalMs);
+      this.syncTimer = setInterval(() => {
+        this.syncTick += 1;
+        this.flushOutbox();
+        // Relay sockets die silently (laptop sleep, network change) and their
+        // subscriptions never come back on their own — refresh periodically so
+        // a wedged tab recovers within ~1 minute instead of never.
+        if (this.syncTick % 3 === 0) this.refreshSubscriptions();
+        else void this.syncAllPeers();
+      }, this.syncIntervalMs);
     }
     this.hooks.docsChanged();
     this.hooks.status('listening');
@@ -183,9 +216,18 @@ export class CollabCore {
   private scheduleSelfSnapshot() {
     if (this.muteSnap) return;
     clearTimeout(this.snapTimer);
-    this.snapTimer = setTimeout(() => { this.publishSelfSnapshot().catch((e) => this.hooks.log('warn', 'snapshot: ' + e.message)); }, 2000);
+    // Debounce 2s, but also keep >=15s between actual publishes: every saveAll
+    // used to republish the snapshot, and during active editing that tripped
+    // damus's rate limiter — which then rejected *protocol envelopes* too
+    // (observed live: 'rate-limited: you are noting too much').
+    const wait = Math.max(2000, this.lastSnapPublish + 15000 - now());
+    this.snapTimer = setTimeout(() => { this.publishSelfSnapshot().catch((e) => this.hooks.log('warn', 'snapshot: ' + e.message)); }, wait);
   }
   async publishSelfSnapshot() {
+    const plain = JSON.stringify({ v: 1, docs: this.docs, chains: this.chains });
+    if (plain === this.lastSnapHash) return; // nothing changed — don't spam relays
+    this.lastSnapHash = plain;
+    this.lastSnapPublish = now();
     const content = selfEncrypt(this.sk!, this.pk, JSON.stringify({ v: 1, t: now(), docs: this.docs, chains: this.chains }));
     this.publishAsIdentity(KIND_SELFSNAP, content, [['d', DTAG_SNAP]]);
     this.hooks.log('info', 'Encrypted account snapshot updated on relays.');
@@ -216,14 +258,56 @@ export class CollabCore {
   }
 
   /* ---------- transport ---------- */
+  /** Publish a signed event and account for delivery. Live-relay probing showed
+   * publishes can fail on every relay at once (rate limits, dead relays, sockets
+   * still connecting) — previously fire-and-forget, so a lost update looked like
+   * a protocol bug. Now: log the accept count, and if NO relay accepted, queue
+   * the event in the outbox for retry (same id — relays and receivers dedupe). */
+  private publishEv(ev: any, retryable: boolean) {
+    void Promise.allSettled(this.pool.publish(this.relays, ev)).then((results) => {
+      // Some pool implementations resolve with a failure reason instead of
+      // rejecting (seen live: 'connection failure: …'), so inspect the value too.
+      const ok = results.filter(
+        (r) => r.status === 'fulfilled' && !/fail|invalid|error|timed|rate-limit/i.test(String((r as any).value ?? ''))
+      ).length;
+      if (ok === 0) {
+        this.hooks.log('warn', `event not accepted by any relay (kind ${ev.kind})${retryable ? ' — queued for retry' : ''}`);
+        if (retryable && this.outbox.length < 50 && !this.outbox.some((o) => o.ev.id === ev.id)) {
+          this.outbox.push({ ev, tries: 0 });
+        }
+      } else if (ok < this.relays.length) {
+        this.hooks.log('wire', `↳ delivered to ${ok}/${this.relays.length} relays`);
+      }
+    });
+  }
+  /** Retry undelivered events (bounded). Called from the sync tick. */
+  flushOutbox() {
+    if (!this.outbox.length) return;
+    const batch = this.outbox;
+    this.outbox = [];
+    for (const o of batch) {
+      if (o.tries >= 6) { this.hooks.log('warn', `giving up on undelivered event (kind ${o.ev.kind})`); continue; }
+      o.tries += 1;
+      this.outbox.push(o);
+      void Promise.allSettled(this.pool.publish(this.relays, o.ev)).then((results) => {
+        const ok = results.filter(
+          (r) => r.status === 'fulfilled' && !/fail|invalid|error|timed|rate-limit/i.test(String((r as any).value ?? ''))
+        ).length;
+        if (ok > 0) {
+          this.outbox = this.outbox.filter((x) => x.ev.id !== o.ev.id);
+          this.hooks.log('ok', `↳ retried event delivered (kind ${o.ev.kind})`);
+        }
+      });
+    }
+  }
   private publishAnon(kind: number, content: string, tags: string[][]) {
     const throwaway = generateSecretKey();
     const ev = finalizeEvent({ kind, created_at: Math.floor(now() / 1000), tags, content }, throwaway);
-    this.pool.publish(this.relays, ev).forEach((p) => p.catch(() => {}));
+    this.publishEv(ev, true); // envelopes carry protocol messages — must arrive
   }
   private publishAsIdentity(kind: number, content: string, tags: string[][]) {
     const ev = finalizeEvent({ kind, created_at: Math.floor(now() / 1000), tags, content }, this.sk!);
-    this.pool.publish(this.relays, ev).forEach((p) => p.catch(() => {}));
+    this.publishEv(ev, false); // replaceable state (prekeys/snapshot) republishes anyway
   }
   async publishPrekeys() {
     this.publishAsIdentity(KIND_PREKEYS, JSON.stringify(serializeBundle(this.identityBundle)), [['d', DTAG]]);

@@ -385,6 +385,12 @@ if (import.meta.env.PROD && location.protocol.startsWith('http')) {
   $('dl-wrap').style.display = '';
 }
 
+// A tab coming back from sleep/background often has silently dead relay
+// sockets; refresh subscriptions immediately instead of waiting for the timer.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && core.pk) core.refreshSubscriptions();
+});
+
 window.addEventListener('beforeunload', () => core.stop());
 
 /** Acquire the single-writer lock, preload storage (migrating any legacy

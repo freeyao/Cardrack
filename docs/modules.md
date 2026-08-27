@@ -89,8 +89,9 @@ sealed under epoch keys.
 
 Done: single-file build that runs over `file://`, GitHub Pages deploy gated on
 tests, in-app offline-copy download, prototype warning banner.
-Next: versioned releases (tags → artifacts), self-hosted relay + storage docker
-guide.
+Next: versioned releases (tags → artifacts). (No self-hosted infrastructure
+guide: the project ships no infrastructure — owner decision, see ROADMAP
+Positioning.)
 
 ## Naming notes
 
@@ -98,4 +99,4 @@ guide.
   Product-wide wording (README, UI copy) migrates opportunistically.
 - **Cabal** — reserved; a word the owner likes, not yet assigned. Natural
   candidates when they arrive: the all-pairs/MLS mode (a conclave with no
-  owner), a federation of conclaves, or the self-hosted relay+storage bundle.
+  owner) or a federation of conclaves.

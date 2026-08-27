@@ -525,6 +525,7 @@ export class CollabCore {
     if (m.t === 'sync-ack') return void this.onSyncAck(from, m);
     if (m.t === 'rename') return this.onRename(from, m);        // owner → members: title change
     if (m.t === 'key-envelope') return this.onKeyEnvelope(from, m); // owner → members: epoch key
+    if (m.t === 'remove') return this.onRemoved(from, m);       // owner → member: you were removed
     this.hooks.log('info', 'unknown message type ' + m.t);
   }
 
@@ -538,6 +539,19 @@ export class CollabCore {
     if (!doc.epoch || m.epoch > doc.epoch) doc.epoch = m.epoch;
     this.saveAll();
     this.hooks.log('ok', `"${doc.title}" advanced to key epoch ${m.epoch}`);
+  }
+
+  // ---- member: the owner removed me from a doc ----
+  private onRemoved(from: string, m: any) {
+    const doc = this.docs[m.docId];
+    if (!doc) return;
+    if (from !== doc.ownerPk) return this.hooks.log('warn', `ignoring remove not from owner (${short(from, 12)})`);
+    const title = doc.title;
+    delete this.docs[m.docId];
+    delete this.ydocs[m.docId];
+    this.saveAll(); // also drops the doc from this account's snapshot
+    this.hooks.docsChanged();
+    this.hooks.log('warn', `You were removed from "${title}" — the document is no longer on this device.`);
   }
 
   // ---- member: the owner renamed the doc ----
@@ -685,6 +699,27 @@ export class CollabCore {
       try { await this.sendTo(mem.pk, { t: 'rename', docId, title }); }
       catch (e: any) { this.hooks.log('warn', `rename notify to ${short(mem.pk, 12)} failed: ${e.message}`); }
     }
+  }
+
+  /** Remove a member (owner-only). Fanout and sync exclude them from now on,
+   * their client is told to drop the doc, later sends bounce off the non-member
+   * check, and the doc key rotates so future epochs exclude them. No
+   * cryptographic erasure of what they already hold — accepted: they may keep
+   * local copies or old messages; real at-rest forward secrecy arrives with
+   * sealed snapshots (docs/model.md §Key custody). */
+  async removeMember(docId: string, pk: string) {
+    if (!this.mutable()) return;
+    const doc = this.docs[docId];
+    if (!doc) return;
+    if (doc.ownerPk !== this.pk) return this.hooks.log('warn', 'only the owner can remove members');
+    if (!doc.members.some((x) => x.pk === pk)) return;
+    doc.members = doc.members.filter((x) => x.pk !== pk);
+    this.saveAll();
+    this.hooks.docsChanged();
+    try { await this.sendTo(pk, { t: 'remove', docId }); }
+    catch (e: any) { this.hooks.log('warn', `remove notice to ${short(pk, 12)} failed: ${e.message}`); }
+    this.hooks.log('ok', `Removed ${short(pk, 12)} from "${doc.title}".`);
+    await this.rotateDocKey(docId); // fresh epoch for the remaining conclave
   }
 
   /** Rotate the doc key: owner-only, epoch+1 with a fresh random key (invariant

@@ -33,12 +33,12 @@ describe.skipIf(!LIVE)('live friend counterparty', () => {
 
     await sleep(2000);
     await core.localEdit(docId, 'edit from the node friend', 'plain');
-    console.log('=== friend committed an edit; waiting for owner echo…');
-    for (let i = 0; i < 30; i++) {
+    console.log('=== friend committed an edit; staying online 8 min (test removal on me!)…');
+    for (let i = 0; i < 240; i++) {
       await sleep(2000);
-      if (core.docs[docId].version > 0) break;
+      if (!core.docs[docId]) { console.log('=== I WAS REMOVED — doc deleted from my device.'); break; }
     }
-    console.log('=== final: version', core.docs[docId].version, 'content', JSON.stringify(core.docs[docId].content));
+    console.log('=== final:', core.docs[docId] ? `still member, v${core.docs[docId].version}, ${JSON.stringify(core.docs[docId].content)}` : 'removed (doc gone)');
     core.stop();
-  }, 300000);
+  }, 1200000);
 });

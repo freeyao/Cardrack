@@ -30,7 +30,11 @@ const core = new CollabCore({
   sanitize: sanitizeHtml,
   hooks: {
     log: logRow,
-    docsChanged: () => renderDocList(),
+    docsChanged: () => {
+      renderDocList();
+      // the open doc can vanish out from under us (removed by the owner)
+      if (currentDoc && !core.docs[currentDoc]) { $('doc-view').classList.add('hidden'); currentDoc = null; }
+    },
     docApplied: (docId) => {
       renderDocList(); // keep list metadata (vN) fresh — merges don't fire docsChanged
       if (docId !== currentDoc || !pane) return;
@@ -125,10 +129,26 @@ function renderDocList() {
 
 function renderMembers(docId: string) {
   const d = core.docs[docId];
-  const rows = [`<div class="m"><span class="who">${short(core.npubOf(d.ownerPk), 24)}</span><span class="badge">owner${d.ownerPk === core.pk ? ' (me)' : ''}</span></div>`];
+  const mine = d.ownerPk === core.pk;
+  const rows = [`<div class="m"><span class="who">${short(core.npubOf(d.ownerPk), 24)}</span><span class="badge">owner${mine ? ' (me)' : ''}</span></div>`];
   for (const m of d.members)
-    rows.push(`<div class="m"><span class="who">${short(core.npubOf(m.pk), 24)}</span><span class="badge ${m.role === 'viewer' ? 'viewer' : ''}">${m.role}</span></div>`);
+    rows.push(
+      `<div class="m"><span class="who">${short(core.npubOf(m.pk), 24)}</span><span class="badge ${m.role === 'viewer' ? 'viewer' : ''}">${m.role}</span>` +
+      (mine ? `<button class="rm-member" data-pk="${m.pk}" title="remove from this document">✕</button>` : '') +
+      `</div>`
+    );
   $('member-list').innerHTML = rows.join('');
+  if (mine) {
+    $('member-list').querySelectorAll('button.rm-member').forEach((b) => b.addEventListener('click', async () => {
+      const pk = (b as HTMLElement).dataset.pk!;
+      if (!confirm(
+        'Remove this member?\n\nThey will stop receiving updates and the document will be ' +
+        'removed from their device. They may still have older copies — removal cannot un-share the past.'
+      )) return;
+      await core.removeMember(docId, pk);
+      renderMembers(docId);
+    }));
+  }
 }
 
 function renderConflicts(docId: string) {

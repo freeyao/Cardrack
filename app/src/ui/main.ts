@@ -32,6 +32,7 @@ const core = new CollabCore({
     log: logRow,
     docsChanged: () => renderDocList(),
     docApplied: (docId) => {
+      renderDocList(); // keep list metadata (vN) fresh — merges don't fire docsChanged
       if (docId !== currentDoc || !pane) return;
       const d = core.docs[docId];
       if (pane.isDirty()) {

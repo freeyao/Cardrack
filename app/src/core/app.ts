@@ -98,10 +98,15 @@ export class CollabCore {
     });
   }
 
+  private lastRefresh = 0;
   /** Re-open every subscription and reconcile — recovers from silently dropped
-   * relay sockets (sleep/wake, network switch). Cheap: relays replay stored
-   * events on re-subscribe and `seen` dedupes them. */
+   * relay sockets (sleep/wake, network switch). Throttled hard: visibilitychange
+   * fires on every tab switch, and an uncooled refresh turned each one into a
+   * resubscribe + sync burst that tripped relay rate limits (observed live —
+   * the limiter then rejects protocol envelopes like invites too). */
   refreshSubscriptions() {
+    if (now() - this.lastRefresh < 30000) return;
+    this.lastRefresh = now();
     this.subscribeBoot();
     this.resubscribeChains();
     this.flushOutbox();

@@ -8,7 +8,7 @@ beforeAll(() => { (globalThis as any).window = globalThis; });
 async function makeCore(relay: FakeRelay) {
   const hooks = collectHooks();
   // syncIntervalMs: 0 disables the background timer so tests drive sync deterministically.
-  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks, syncIntervalMs: 0 });
+  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks, syncIntervalMs: 0, snapshotDebounceMs: 2000, snapshotMinIntervalMs: 0 });
   await core.startWithNewAccount(core.newMnemonic());
   return { core, hooks };
 }
@@ -71,7 +71,7 @@ describe('collab protocol', () => {
     // device restore: E's device dies; new core from same mnemonic
     await sleep(2300); // let E's debounced snapshot publish
     const N = { hooks: collectHooks() } as any;
-    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0 });
+    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0, snapshotDebounceMs: 2000, snapshotMinIntervalMs: 0 });
     await N.core.startWithMnemonic(E.core.mnemonic!);
     await sleep(200);
     expect(N.core.pk).toBe(E.core.pk);
@@ -98,7 +98,7 @@ describe('collab protocol', () => {
 
     // fresh device, same mnemonic — nothing local, no peers to sync from
     const N = { hooks: collectHooks() } as any;
-    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0 });
+    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0, snapshotDebounceMs: 2000, snapshotMinIntervalMs: 0 });
     await N.core.startWithMnemonic(O.core.mnemonic!);
     await sleep(200);
 

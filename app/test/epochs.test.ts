@@ -8,7 +8,7 @@ beforeAll(() => { (globalThis as any).window = globalThis; });
 
 async function makeCore(relay: FakeRelay) {
   const hooks = collectHooks();
-  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks, syncIntervalMs: 0 });
+  const core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks, syncIntervalMs: 0, snapshotDebounceMs: 2000, snapshotMinIntervalMs: 0 });
   await core.startWithNewAccount(core.newMnemonic());
   return { core, hooks };
 }
@@ -87,7 +87,7 @@ describe('doc-key epochs', () => {
 
     // fresh device, same mnemonic — nothing local
     const N = { hooks: collectHooks() } as any;
-    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0 });
+    N.core = new CollabCore({ pool: relay.poolFor(), storage: new MemKV(), hooks: N.hooks, syncIntervalMs: 0, snapshotDebounceMs: 2000, snapshotMinIntervalMs: 0 });
     await N.core.startWithMnemonic(O.core.mnemonic!);
     await sleep(200);
 

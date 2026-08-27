@@ -89,7 +89,9 @@ consumption + signed-prekey rotation.
 Doc management (rename **done**; archive/export md-docx). ~~Relay customization: relay list
 editable in the UI (add/remove, per-relay health probe), from both the account gate and the
 id bar, so a circle can point at its own relay without a rebuild~~ **done** — pairs with the
-still-todo self-hosted relay+storage docker guide.
+still-todo self-hosted relay+storage docker guide. **Instance configuration**: self-deployed
+instances expose the tuning parameters (snapshot debounce/floor, sync interval, refresh
+cadence, retry policy — today owner-decided constants in CoreOpts) as user-facing config.
 Encrypted attachments (chunked to storage, uniform sizes). Notifications. Mobile UI, i18n.
 Hardening: dependency pinning, reproducible build, CSP, envelope-parser fuzzing, external
 review of the address-chain construction.

@@ -43,6 +43,10 @@ export interface CoreOpts {
   relays?: string[];
   /** Anti-entropy sync interval (ms). 0 disables the timer (tests drive syncAllPeers manually). */
   syncIntervalMs?: number;
+  /** Account-snapshot publish debounce after a change (ms). Owner-decided: 10s. */
+  snapshotDebounceMs?: number;
+  /** Minimum interval between snapshot publishes (ms). Owner-decided: 60s. */
+  snapshotMinIntervalMs?: number;
 }
 
 export class CollabCore {
@@ -76,11 +80,16 @@ export class CollabCore {
   private lastSnapHash = '';
   private syncTick = 0;
 
+  snapDebounceMs: number;
+  snapFloorMs: number;
+
   constructor(o: CoreOpts) {
     this.pool = o.pool; this.storage = o.storage; this.hooks = o.hooks;
     this.relays = o.relays || DEFAULT_RELAYS;
     this.sanitize = o.sanitize || ((h) => h);
     this.syncIntervalMs = o.syncIntervalMs ?? 20000;
+    this.snapDebounceMs = o.snapshotDebounceMs ?? 10000;
+    this.snapFloorMs = o.snapshotMinIntervalMs ?? 60000;
   }
 
   /** Stop background timers (call on teardown / account switch). */
@@ -221,11 +230,10 @@ export class CollabCore {
   private scheduleSelfSnapshot() {
     if (this.muteSnap) return;
     clearTimeout(this.snapTimer);
-    // Debounce 2s, but also keep >=15s between actual publishes: every saveAll
-    // used to republish the snapshot, and during active editing that tripped
-    // damus's rate limiter — which then rejected *protocol envelopes* too
-    // (observed live: 'rate-limited: you are noting too much').
-    const wait = Math.max(2000, this.lastSnapPublish + 15000 - now());
+    // Debounce + publish floor (owner-decided: 10s / 60s). The snapshot exists
+    // only for device restore; eager republishing during editing tripped relay
+    // rate limits that then rejected protocol envelopes too (observed live).
+    const wait = Math.max(this.snapDebounceMs, this.lastSnapPublish + this.snapFloorMs - now());
     this.snapTimer = setTimeout(() => { this.publishSelfSnapshot().catch((e) => this.hooks.log('warn', 'snapshot: ' + e.message)); }, wait);
   }
   async publishSelfSnapshot() {

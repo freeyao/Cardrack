@@ -6,8 +6,16 @@ An **independent** E2EE document-collaboration app. Nostr is plumbing (relays, e
 keys); Signal protocol is the crypto; Keychat/NIP-07 is an optional external signer, nothing
 more. Any browser can run it.
 
-**v1.0 target:** a circle of 2–10 people, one self-hosted relay, mnemonic-backed accounts,
-documents never lost, automatic catch-up after offline, device switch without asking anyone.
+**The project ships no infrastructure** (decided 2026-08-27): no official relay, no server,
+no component users must trust because we run it — a privacy project must not add superfluous
+components. Conclaves use public relays of their own choosing (the relay-customization UI
+covers anyone who prefers to run their own; that is their choice, never a project dependency).
+Consequently, public-relay hardening (outbox/retry, publish accounting, rate-limit hygiene,
+subscription refresh) is the permanent reliability strategy, not a stopgap.
+
+**v1.0 target:** a conclave of 2–10 people on public relays of their choice, mnemonic-backed
+accounts, documents never lost, automatic catch-up after offline, device switch without
+asking anyone.
 
 ## Invariants (settled)
 
@@ -38,7 +46,7 @@ documents never lost, automatic catch-up after offline, device switch without as
 | Layer | Component | Notes |
 |---|---|---|
 | Client | Tiptap+Yjs editor · version log/snapshots · Signal engine · address chains · account (mnemonic) | browser or any webview |
-| Signaling | Nostr relay(s), self-hosted preferred | live deltas, invites, envelopes, pointers |
+| Signaling | Nostr relay(s), user-chosen — the project runs none | live deltas, invites, envelopes, pointers |
 | State | StorageAdapter: Blossom / GitHub repo / S3 / WebDAV | encrypted snapshot chunks, sha256-addressed; GitHub = zero-setup option, replaces storage never signaling |
 | Identity | app-native mnemonic account; NIP-07 optional | multi-device via Signal deviceIds, ratchets never synced |
 
@@ -88,8 +96,9 @@ consumption + signed-prekey rotation.
 **P3 — productization**
 Doc management (rename **done**; archive/export md-docx). ~~Relay customization: relay list
 editable in the UI (add/remove, per-relay health probe), from both the account gate and the
-id bar, so a circle can point at its own relay without a rebuild~~ **done** — pairs with the
-still-todo self-hosted relay+storage docker guide. **Instance configuration**: self-deployed
+id bar, so a circle can point at its own relay without a rebuild~~ **done**. (A self-hosted
+relay/storage guide is dropped from the plan — the project ships no infrastructure and does
+not steer users toward running any; see Positioning.) **Instance configuration**: self-deployed
 instances expose the tuning parameters (snapshot debounce/floor, sync interval, refresh
 cadence, retry policy — today owner-decided constants in CoreOpts) as user-facing config.
 Encrypted attachments (chunked to storage, uniform sizes). Notifications. Mobile UI, i18n.

@@ -12,7 +12,7 @@ import { Chain, deriveAddr, newChain } from './chains';
 import { Commit } from './commit';
 import {
   newDoc, docText, applyStringEdit, encodeState, encodeSince, stateVector, applyUpdate,
-  b64FromBytes, bytesFromB64, isEmptyUpdate,
+  b64FromBytes, bytesFromB64, isEmptyUpdate, migrateTextToRich,
 } from './ydoc';
 import type { Doc as YDoc } from 'yjs';
 import {
@@ -605,6 +605,14 @@ export class CollabCore {
         applyStringEdit(y, doc.content); // one-time migration of legacy content
       }
       this.ydocs[docId] = y;
+      // Lift a flat pre-rich doc into the rich fragment — owner-side only, and
+      // persisted immediately: re-running the lift next session would mint new
+      // CRDT ids and duplicate the text after sync. Members receive the lifted
+      // structure via anti-entropy.
+      if (doc && doc.ownerPk === this.pk && migrateTextToRich(y)) {
+        doc.ystate = b64FromBytes(encodeState(y));
+        this.saveAll();
+      }
     }
     return y;
   }
@@ -782,24 +790,11 @@ export class CollabCore {
     }
   }
 
-  /** Apply an edit. The new `content` is diffed into the doc's Yjs text, so
-   * concurrent edits to different regions auto-merge (see docs/model.md). The
-   * `parent` argument is accepted for UI compatibility but no longer used —
-   * the CRDT needs no base head. Owner sequences + fans out; an editor proposes
-   * its delta to the owner. */
-  async localEdit(docId: string, content: string, format: 'plain' | 'rich', _parent?: string) {
-    if (!this.mutable()) return;
+  /** Shared tail for a local change already applied to the shared Y.Doc:
+   * the owner sequences and fans out; an editor proposes to the owner. */
+  private async broadcastLocalDelta(docId: string, delta: Uint8Array) {
     const doc = this.docs[docId];
-    if (!doc || doc.myRole === 'viewer') return;
-    const y = this.ydocFor(docId);
-    const before = stateVector(y);
-    doc.format = format;
-    applyStringEdit(y, content, this.pk);
-    const delta = encodeSince(y, before);
-    if (isEmptyUpdate(delta)) return; // no actual change
-
     if (doc.ownerPk === this.pk) {
-      // owner sequences its own edit and fans out the delta
       doc.version += 1; doc.author = this.pk; doc.ts = now();
       this.materialize(docId);
       this.saveAll();
@@ -816,5 +811,40 @@ export class CollabCore {
       try { await this.sendTo(doc.ownerPk, { t: 'update', docId, update: b64FromBytes(delta) }); }
       catch (e: any) { this.hooks.log('warn', `send update failed: ${e.message}`); }
     }
+  }
+
+  /** Apply a string edit (tests / headless peers; the rich editor uses
+   * commitUpdate). Diffed into the doc at character granularity, so concurrent
+   * edits to different regions auto-merge (see docs/model.md). The `parent`
+   * argument is accepted for UI compatibility but unused — no base head needed. */
+  async localEdit(docId: string, content: string, format: 'plain' | 'rich', _parent?: string) {
+    if (!this.mutable()) return;
+    const doc = this.docs[docId];
+    if (!doc || doc.myRole === 'viewer') return;
+    const y = this.ydocFor(docId);
+    const before = stateVector(y);
+    doc.format = format;
+    applyStringEdit(y, content, this.pk);
+    const delta = encodeSince(y, before);
+    if (isEmptyUpdate(delta)) return; // no actual change
+    await this.broadcastLocalDelta(docId, delta);
+  }
+
+  /** Commit a draft delta from the rich editor. The UI edits a local draft
+   * replica (so manual-Commit semantics hold: nothing leaves the device until
+   * this call); the delta between draft and shared doc arrives here as an
+   * opaque update, is applied to the shared doc, then sequenced/proposed. */
+  async commitUpdate(docId: string, updateB64: string) {
+    if (!this.mutable()) return;
+    const doc = this.docs[docId];
+    if (!doc || doc.myRole === 'viewer') return;
+    const y = this.ydocFor(docId);
+    const before = stateVector(y);
+    try { applyUpdate(y, bytesFromB64(updateB64), this.pk); }
+    catch (e: any) { return this.hooks.log('warn', 'editor delta rejected: ' + e.message); }
+    const delta = encodeSince(y, before);
+    if (isEmptyUpdate(delta)) return; // duplicate / no change
+    doc.format = 'rich';
+    await this.broadcastLocalDelta(docId, delta);
   }
 }

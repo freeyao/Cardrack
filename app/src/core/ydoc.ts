@@ -1,21 +1,52 @@
 // Yjs document primitives — the CRDT layer the P1 model is built on
 // (see docs/model.md: ops-as-truth, snapshots-as-representation).
 //
-// DOM-free and unit-tested in Node. The protocol layer (app.ts) will carry the
-// binary updates produced here inside commit envelopes; the UI (Tiptap) will
-// later bind directly to the Y.Doc. Content is a single shared Y.Text under the
-// key 'content'.
+// DOM-free and unit-tested in Node. The protocol layer (app.ts) carries the
+// binary updates produced here inside commit envelopes, and never inspects
+// them. The canonical content is a rich Y.XmlFragment under 'rich' (what
+// Tiptap/ProseMirror binds to); the older flat Y.Text under 'content' remains
+// readable for docs created before rich text, and migrateTextToRich() lifts it.
 //
-// Until Tiptap lands, the plain-textarea UI only yields whole strings. To keep
-// real CRDT merge semantics (so two peers editing different regions converge
-// instead of clobbering), applyStringEdit() diffs the current text against the
-// new string and applies only the minimal changed range as insert/delete ops.
+// applyStringEdit() is the programmatic/test shim: it edits a single-paragraph
+// document at character granularity (real CRDT merge semantics preserved), so
+// the DOM-free tests and headless peers can edit without a ProseMirror view.
 import * as Y from 'yjs';
 
-export const CONTENT_KEY = 'content';
+export const CONTENT_KEY = 'content'; // legacy flat text (pre-rich docs)
+export const RICH_KEY = 'rich';       // canonical rich fragment (Tiptap binds here)
 
 export const newDoc = (): Y.Doc => new Y.Doc();
-export const docText = (doc: Y.Doc): string => doc.getText(CONTENT_KEY).toString();
+export const richFragment = (doc: Y.Doc): Y.XmlFragment => doc.getXmlFragment(RICH_KEY);
+
+/** Plain text of one Y.XmlText: its insert ops, formatting ignored. */
+function xmlTextPlain(t: Y.XmlText): string {
+  return (t.toDelta() as { insert?: unknown }[]).map((op) => (typeof op.insert === 'string' ? op.insert : '')).join('');
+}
+/** Recursive plain text of an element's inline content. */
+function elementPlain(el: Y.XmlElement | Y.XmlFragment): string {
+  let out = '';
+  for (let i = 0; i < el.length; i++) {
+    const c = el.get(i);
+    if (c instanceof Y.XmlText) out += xmlTextPlain(c);
+    else if (c instanceof Y.XmlElement) out += elementPlain(c);
+  }
+  return out;
+}
+
+/** Materialized plain text: top-level blocks joined with newlines. Falls back
+ * to the legacy flat Y.Text for docs that haven't been migrated yet. */
+export function docText(doc: Y.Doc): string {
+  const frag = richFragment(doc);
+  if (frag.length > 0) {
+    const blocks: string[] = [];
+    for (let i = 0; i < frag.length; i++) {
+      const c = frag.get(i);
+      blocks.push(c instanceof Y.XmlText ? xmlTextPlain(c) : elementPlain(c as Y.XmlElement));
+    }
+    return blocks.join('\n');
+  }
+  return doc.getText(CONTENT_KEY).toString();
+}
 
 /** Minimal edit range between two strings via common prefix + suffix. */
 function diffRange(a: string, b: string): { index: number; remove: number; insert: string } {
@@ -27,18 +58,62 @@ function diffRange(a: string, b: string): { index: number; remove: number; inser
   return { index: start, remove: endA - start, insert: b.slice(start, endB) };
 }
 
-/** Reconcile the shared text to `next` by applying only the changed range, in a
- * single transaction tagged with `origin`. Preserves CRDT merge for edits that
- * don't overlap another peer's concurrent change. */
+/** The shim's editable text node: a fragment holding exactly one paragraph with
+ * one Y.XmlText. Returns null when the doc has richer structure. */
+function shimText(frag: Y.XmlFragment): Y.XmlText | null {
+  if (frag.length !== 1) return null;
+  const p = frag.get(0);
+  if (!(p instanceof Y.XmlElement) || p.nodeName !== 'paragraph' || p.length !== 1) return null;
+  const t = p.get(0);
+  return t instanceof Y.XmlText ? t : null;
+}
+
+/** Reconcile the document's text to `next` at character granularity (CRDT merge
+ * preserved for non-overlapping concurrent edits). Operates on the single-
+ * paragraph shim shape; a Tiptap-structured document is replaced wholesale —
+ * the UI never calls this (it commits real deltas), only tests/headless peers do. */
 export function applyStringEdit(doc: Y.Doc, next: string, origin?: any): void {
-  const text = doc.getText(CONTENT_KEY);
-  const cur = text.toString();
-  if (cur === next) return;
-  const { index, remove, insert } = diffRange(cur, next);
+  const frag = richFragment(doc);
   doc.transact(() => {
-    if (remove) text.delete(index, remove);
-    if (insert) text.insert(index, insert);
+    let t = shimText(frag);
+    if (!t && frag.length === 0) {
+      const p = new Y.XmlElement('paragraph');
+      t = new Y.XmlText();
+      p.insert(0, [t]);
+      frag.insert(0, [p]);
+    }
+    if (t) {
+      const cur = xmlTextPlain(t);
+      if (cur === next) return;
+      const { index, remove, insert } = diffRange(cur, next);
+      if (remove) t.delete(index, remove);
+      if (insert) t.insert(index, insert);
+    } else {
+      // structured doc: replace content (programmatic writers lose structure)
+      frag.delete(0, frag.length);
+      const p = new Y.XmlElement('paragraph');
+      p.insert(0, [new Y.XmlText(next)]);
+      frag.insert(0, [p]);
+    }
   }, origin);
+}
+
+/** One-time lift of a legacy flat-text doc into the rich fragment: one
+ * paragraph per line. Returns true if it migrated (caller materializes/saves;
+ * anti-entropy carries the delta to peers). Owner-side only, by convention. */
+export function migrateTextToRich(doc: Y.Doc): boolean {
+  const frag = richFragment(doc);
+  const legacy = doc.getText(CONTENT_KEY).toString();
+  if (frag.length > 0 || !legacy) return false;
+  doc.transact(() => {
+    const paras = legacy.split('\n').map((line) => {
+      const p = new Y.XmlElement('paragraph');
+      p.insert(0, [new Y.XmlText(line)]);
+      return p;
+    });
+    frag.insert(0, paras);
+  });
+  return true;
 }
 
 /** Full state as a single update (a snapshot; use for onboarding / at-rest). */

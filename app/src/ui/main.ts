@@ -39,14 +39,9 @@ const core = new CollabCore({
       renderDocList(); // keep list metadata (vN) fresh — merges don't fire docsChanged
       if (docId !== currentDoc || !pane) return;
       const d = core.docs[docId];
-      if (pane.isDirty()) {
-        // don't clobber an unsaved draft; note that the head moved
-        pane.setVersion(d.version);
-        pane.noteBehind(d.version);
-      } else {
-        pane.setContent(d.content, d.format, d.version);
-        baseHead = d.head;
-      }
+      // CRDT-merge the change into the editor's draft — safe mid-edit, no clobber
+      pane.absorb();
+      pane.setVersion(d.version);
       renderConflicts(docId);
     },
     status: (t) => { $('prekey-status').textContent = t; },
@@ -56,7 +51,6 @@ const core = new CollabCore({
 
 let currentDoc: string | null = null;
 let pane: EditorPane | null = null;
-let baseHead = ''; // the head the editor's content was written against
 let readOnly = false; // true when another tab holds the single-writer lock
 
 // Per-doc real-time toggle (default off = manual Commit). Local-only preference,
@@ -64,15 +58,6 @@ let readOnly = false; // true when another tab holds the single-writer lock
 const liveModes: Record<string, boolean> = {};
 function loadLiveModes() { try { Object.assign(liveModes, JSON.parse(storage.get('sc2.livemodes') || '{}')); } catch {} }
 function saveLiveModes() { storage.set('sc2.livemodes', JSON.stringify(liveModes)); }
-
-let liveTimer: any = null;
-function scheduleLive(docId: string, content: string, format: 'plain' | 'rich') {
-  clearTimeout(liveTimer);
-  liveTimer = setTimeout(() => {
-    void core.localEdit(docId, content, format, baseHead);
-    baseHead = core.docs[docId].head;
-  }, 400);
-}
 
 /** Enable/disable real-time for a doc. Turning it on requires a strong,
  * explicit confirmation of the metadata trade-off; turning it off is immediate. */
@@ -179,17 +164,16 @@ function openDoc(docId: string) {
   $('doc-view').classList.remove('hidden');
   ($('invite-npub').parentElement as HTMLElement).style.display = d.ownerPk === core.pk ? '' : 'none';
   renderMembers(docId);
+  pane?.destroy();
   $('pane-doc').innerHTML = '';
-  baseHead = d.head;
-  pane = new EditorPane($('pane-doc'), '📄 ' + d.title, (content, format) => {
-    void core.localEdit(docId, content, format, baseHead);
-    // owner advances immediately; editor keeps its base until the owner confirms
-    baseHead = core.docs[docId].head;
-  }, {
-    onChange: (content, format) => scheduleLive(docId, content, format),
+  pane = new EditorPane($('pane-doc'), '📄 ' + d.title, {
+    exportState: () => core.exportDocState(docId),
+    sharedVector: () => core.exportDocVector(docId),
+    exportSince: (sv) => core.exportDocSince(docId, sv),
+    onCommit: (delta) => void core.commitUpdate(docId, delta),
     onToggleLive: () => toggleLive(docId),
   });
-  pane.setContent(d.content, d.format, d.version);
+  pane.setVersion(d.version);
   pane.setReadonly(d.myRole === 'viewer' || readOnly);
   if (d.myRole !== 'viewer' && !readOnly) pane.setLive(!!liveModes[docId]);
   // Owner: click the title to rename it inline (discoverable, no native prompt).
@@ -316,7 +300,10 @@ $('invite-send').addEventListener('click', async () => {
     renderMembers(currentDoc);
   } catch (e: any) { logRow('warn', 'invite failed: ' + e.message); }
 });
-$('doc-close').addEventListener('click', () => { $('doc-view').classList.add('hidden'); currentDoc = null; renderDocList(); });
+$('doc-close').addEventListener('click', () => {
+  pane?.destroy(); pane = null;
+  $('doc-view').classList.add('hidden'); currentDoc = null; renderDocList();
+});
 
 /* ---------- relay customization ----------
  * The list is a local preference (sc2.relays) read at boot; a circle can point

@@ -35,6 +35,12 @@ function fileProtocolCompat(outDir = 'dist') {
 export default defineConfig({
   plugins: [viteSingleFile(), fileProtocolCompat()],
   build: { target: 'es2020', outDir: 'dist' },
+  // These packages MUST each resolve to a single module instance: the editor,
+  // the collaboration extension, and our draft-doc code exchange Yjs objects and
+  // ProseMirror PluginKeys, and a duplicated copy (vite dev pre-bundling can mix
+  // optimize generations) makes instanceof / plugin-key lookups fail silently —
+  // "reading 'isActive' of undefined" from ySyncPluginKey.getState is the tell.
+  resolve: { dedupe: ['yjs', '@tiptap/y-tiptap', '@tiptap/pm', '@tiptap/core', 'prosemirror-state', 'prosemirror-model', 'prosemirror-view'] },
   // fileParallelism off: the suite mixes CPU-heavy crypto (scrypt in the NIP-49
   // import tests) with timing-sensitive sync tests that use real-clock sleeps —
   // running files concurrently starves the timers and flakes, locally and worse

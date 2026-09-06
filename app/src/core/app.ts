@@ -616,6 +616,13 @@ export class CollabCore {
     }
     return y;
   }
+  /** UI accessors for the rich editor's local draft replica (all base64):
+   * full state to seed a draft, the shared state vector to diff a draft
+   * against, and the delta beyond a given vector to absorb into a draft. */
+  exportDocState(docId: string): string { return b64FromBytes(encodeState(this.ydocFor(docId))); }
+  exportDocVector(docId: string): string { return b64FromBytes(stateVector(this.ydocFor(docId))); }
+  exportDocSince(docId: string, svB64: string): string { return b64FromBytes(encodeSince(this.ydocFor(docId), bytesFromB64(svB64))); }
+
   /** Refresh a doc's materialized view (content + serialized state) from its Yjs doc. */
   private materialize(docId: string) {
     const doc = this.docs[docId];

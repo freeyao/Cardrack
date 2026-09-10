@@ -19,13 +19,20 @@ and any browser can run it. No accounts live on any server.
 - **Documents that merge themselves** — documents are Yjs CRDTs: concurrent
   edits **auto-merge** instead of overwriting each other; the owner sequences
   and fans out changes (see [`docs/model.md`](./docs/model.md)).
+- **Rich-text editing** — a Tiptap (ProseMirror) editor with headings, lists,
+  and task lists, bound to a **local draft replica**: typing never touches the
+  shared document, and incoming remote changes merge in under your cursor
+  instead of conflicting with your draft.
 - **Manual + opt-in real-time editing** — by default edits stay on your device
   until you hit **Commit**; per document you can switch on real-time sync
   (edits stream as you type), gated behind a confirmation that spells out the
   metadata trade-off (relays can see edit timing, though never the text).
-- **Owner-centric sharing** — invite collaborators by their public key with an
-  `editor` / `viewer` role. Their signed prekey bundle is verified before the
-  handshake; the ACL is enforced on the receiving side.
+- **Owner-centric sharing — and unsharing** — invite collaborators by their
+  public key with an `editor` / `viewer` role (their signed prekey bundle is
+  verified before the handshake; the ACL is enforced on the receiving side),
+  and remove them again: removal rotates the doc key so future epochs exclude
+  them. Honest limit: removal revokes access, not the past — a removed member
+  may keep local copies.
 - **Document management** — create and rename documents (click the title to
   edit it inline); the owner's rename propagates to members.
 - **Per-document key epochs** — owner-minted random content keys with rotation
@@ -35,8 +42,14 @@ and any browser can run it. No accounts live on any server.
   to a one-time mailbox address derived from a secret shared inside the
   encrypted invite. Relays see only ciphertext between unlinkable addresses,
   and the relay list is yours to configure (with per-relay health probes).
+  The project **ships no infrastructure** — no official relay, no server, no
+  component you must trust because we run it; conclaves use public relays.
 - **Self-healing sync** — state-vector anti-entropy recovers arbitrary message
   loss and offline gaps; a decrypt failure triggers an automatic re-handshake.
+  Delivery is hardened against real-world public-relay failures: a publish no
+  relay accepts is queued and retried, subscriptions refresh after sleep or
+  network changes, and snapshot publishing is throttled to stay under relay
+  rate limits.
 - **Mnemonic accounts** — a 12-word BIP39 phrase *is* the account (create,
   restore, and **log out** — logout wipes the device, and the phrase is the
   only way back in). No server login. Existing nostr identities can be
@@ -95,10 +108,13 @@ single-file `index.html` deliverable is produced as a build artifact, not hand-e
 ```bash
 cd app
 npm install
-npm test              # vitest (sequential files): signal, dockey, epochs, chains, ydoc, kv, collab, import
+npm test              # vitest (sequential files): signal, dockey, epochs, chains, ydoc, kv, collab, remove, import, …
 npm run dev           # local dev server (recommended way to run it)
 npm run build         # single-file dist/index.html (vite-plugin-singlefile)
 ```
+
+Two live probes (`live-relay.probe.test.ts`, `live-friend.probe.test.ts`) talk
+to real public relays and are skipped unless run with `LIVE=1`.
 
 The single-file `dist/index.html` opens directly over `file://` (just double-click
 it) as well as over HTTP. One caveat on `file://`: browsers block IndexedDB and Web

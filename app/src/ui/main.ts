@@ -75,19 +75,17 @@ function toggleLive(docId: string) {
   });
 }
 
+// Modals are native <dialog>s: showModal() traps focus, Escape closes, and focus
+// returns to the opener — screen readers announce them as real dialogs.
 function showLiveModal(onConfirm: () => void) {
-  const modal = $('live-modal');
+  const modal = $('live-modal') as HTMLDialogElement;
   const ack = $('live-ack') as HTMLInputElement;
   const confirmBtn = $('live-confirm') as HTMLButtonElement;
   ack.checked = false; confirmBtn.disabled = true;
-  modal.classList.remove('hidden');
-  const close = () => {
-    modal.classList.add('hidden');
-    ack.onchange = null; confirmBtn.onclick = null; ($('live-cancel') as HTMLButtonElement).onclick = null;
-  };
   ack.onchange = () => { confirmBtn.disabled = !ack.checked; };
-  ($('live-cancel') as HTMLButtonElement).onclick = close;
-  confirmBtn.onclick = () => { close(); onConfirm(); };
+  ($('live-cancel') as HTMLButtonElement).onclick = () => modal.close();
+  confirmBtn.onclick = () => { modal.close(); onConfirm(); };
+  modal.showModal();
 }
 
 function applyReadOnly() {
@@ -103,23 +101,26 @@ function renderDocList() {
   const el = $('doc-list');
   el.innerHTML = '';
   for (const [id, d] of Object.entries(core.docs)) {
-    const div = document.createElement('div');
-    div.className = 'docitem';
+    // A real <button>: focusable, Enter/Space activate, exposed to screen readers.
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'docitem';
     const who = d.ownerPk === core.pk ? 'owner' : `${d.myRole} · by ${short(d.ownerPk, 12)}`;
-    div.innerHTML = `<span class="t">📄 ${d.title}</span><span class="meta">${who} · v${d.version}</span>`;
-    div.addEventListener('click', () => openDoc(id));
-    el.appendChild(div);
+    btn.innerHTML = `<span class="t">📄 ${escapeHtml(d.title)}</span><span class="meta">${who} · v${d.version}</span>`;
+    btn.setAttribute('aria-label', `Open document ${d.title}, ${who}, version ${d.version}`);
+    btn.addEventListener('click', () => openDoc(id));
+    el.appendChild(btn);
   }
 }
 
 function renderMembers(docId: string) {
   const d = core.docs[docId];
   const mine = d.ownerPk === core.pk;
-  const rows = [`<div class="m"><span class="who">${short(core.npubOf(d.ownerPk), 24)}</span><span class="badge">owner${mine ? ' (me)' : ''}</span></div>`];
+  const rows = [`<div class="m" role="listitem"><span class="who">${short(core.npubOf(d.ownerPk), 24)}</span><span class="badge">owner${mine ? ' (me)' : ''}</span></div>`];
   for (const m of d.members)
     rows.push(
-      `<div class="m"><span class="who">${short(core.npubOf(m.pk), 24)}</span><span class="badge ${m.role === 'viewer' ? 'viewer' : ''}">${m.role}</span>` +
-      (mine ? `<button class="rm-member" data-pk="${m.pk}" title="remove from this document">✕</button>` : '') +
+      `<div class="m" role="listitem"><span class="who">${short(core.npubOf(m.pk), 24)}</span><span class="badge ${m.role === 'viewer' ? 'viewer' : ''}">${m.role}</span>` +
+      (mine ? `<button class="rm-member" data-pk="${m.pk}" aria-label="Remove ${short(core.npubOf(m.pk), 24)} from this document">✕</button>` : '') +
       `</div>`
     );
   $('member-list').innerHTML = rows.join('');
@@ -273,6 +274,7 @@ function startRename(docId: string) {
   input.type = 'text';
   input.value = d.title;
   input.className = 'title-edit';
+  input.setAttribute('aria-label', 'Document title — Enter saves, Escape cancels');
   let done = false;
   const finish = async (save: boolean) => {
     if (done) return; done = true;
@@ -332,7 +334,7 @@ function pingRelay(url: string): Promise<boolean> {
 function renderRelayList() {
   const el = $('relay-list');
   el.innerHTML = relayDraft.map((u, i) =>
-    `<div class="relay-row"><span data-dot="${i}" style="color:var(--muted)" title="checking…">●</span><span class="u">${escapeHtml(u)}</span><button class="ghost" data-rm="${i}" title="remove">✕</button></div>`
+    `<div class="relay-row" role="listitem"><span data-dot="${i}" role="img" style="color:var(--muted)" aria-label="checking reachability">●</span><span class="u">${escapeHtml(u)}</span><button class="ghost" data-rm="${i}" aria-label="Remove relay ${escapeHtml(u)}">✕</button></div>`
   ).join('') || '<p class="hint">No relays — add one below.</p>';
   el.querySelectorAll('button[data-rm]').forEach((b) => b.addEventListener('click', () => {
     relayDraft.splice(Number((b as HTMLElement).dataset.rm), 1);
@@ -340,7 +342,7 @@ function renderRelayList() {
   }));
   relayDraft.forEach((u, i) => void pingRelay(u).then((ok) => {
     const d = el.querySelector(`[data-dot="${i}"]`) as HTMLElement | null;
-    if (d) { d.style.color = ok ? 'var(--ok)' : 'var(--danger)'; d.title = ok ? 'reachable' : 'unreachable from here'; }
+    if (d) { d.style.color = ok ? 'var(--ok)' : 'var(--danger)'; d.setAttribute('aria-label', ok ? 'reachable' : 'unreachable from here'); }
   }));
 }
 function openRelayModal() {
@@ -348,11 +350,11 @@ function openRelayModal() {
   $('relay-err').textContent = '';
   ($('relay-add-url') as HTMLInputElement).value = '';
   renderRelayList();
-  $('relay-modal').classList.remove('hidden');
+  ($('relay-modal') as HTMLDialogElement).showModal();
 }
 $('show-relays').addEventListener('click', openRelayModal);
 $('gate-relays').addEventListener('click', openRelayModal);
-$('relay-cancel').addEventListener('click', () => $('relay-modal').classList.add('hidden'));
+$('relay-cancel').addEventListener('click', () => ($('relay-modal') as HTMLDialogElement).close());
 $('relay-reset').addEventListener('click', () => { relayDraft = [...DEFAULT_RELAYS]; renderRelayList(); });
 $('relay-add').addEventListener('click', () => {
   const input = $('relay-add-url') as HTMLInputElement;

@@ -40,30 +40,34 @@ export class EditorPane {
   private destroyed = false;
 
   constructor(private root: HTMLElement, title: string, private hooks: PaneHooks) {
+    // Toolbar buttons carry aria-label (glyphs like ↶ have no readable name) and
+    // aria-pressed for on/off state; the toolbar itself is one Tab stop with
+    // arrow-key navigation (roving tabindex) per the WAI-ARIA toolbar pattern.
     root.innerHTML = `
       <div class="pane-head">
-        <span class="pane-title">${title}</span>
+        <span class="pane-title" role="heading" aria-level="2"></span>
         <span class="badge" data-role="role-badge">editor</span>
         <span class="badge v" data-role="ver">v0</span>
         <span class="ed-note" data-role="note"></span>
       </div>
-      <div class="toolbar" data-role="toolbar">
-        <button data-cmd="bold" title="bold (Ctrl+B)"><b>B</b></button>
-        <button data-cmd="italic" title="italic (Ctrl+I)"><i>I</i></button>
-        <button data-cmd="strike" title="strikethrough"><s>S</s></button>
-        <button data-cmd="h1" title="heading 1">H1</button>
-        <button data-cmd="h2" title="heading 2">H2</button>
-        <button data-cmd="bullet" title="bullet list">•≡</button>
-        <button data-cmd="ordered" title="numbered list">1.</button>
-        <button data-cmd="task" title="task list">☑</button>
-        <button data-cmd="quote" title="quote">❝</button>
-        <button data-cmd="codeblock" title="code block">{ }</button>
-        <button data-cmd="undo" title="undo (Ctrl+Z)">↶</button>
-        <button data-cmd="redo" title="redo (Ctrl+Shift+Z)">↷</button>
-        <button data-role="live-toggle" class="live-btn" title="How your edits reach collaborators">⚡ Live: off</button>
-        <button data-role="commit" class="commit-btn" disabled>Commit ⌘↵</button>
+      <div class="toolbar" data-role="toolbar" role="toolbar" aria-label="Formatting">
+        <button type="button" data-cmd="bold" aria-label="Bold" aria-pressed="false" title="bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-cmd="italic" aria-label="Italic" aria-pressed="false" title="italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" data-cmd="strike" aria-label="Strikethrough" aria-pressed="false" title="strikethrough"><s>S</s></button>
+        <button type="button" data-cmd="h1" aria-label="Heading 1" aria-pressed="false" title="heading 1">H1</button>
+        <button type="button" data-cmd="h2" aria-label="Heading 2" aria-pressed="false" title="heading 2">H2</button>
+        <button type="button" data-cmd="bullet" aria-label="Bullet list" aria-pressed="false" title="bullet list">•≡</button>
+        <button type="button" data-cmd="ordered" aria-label="Numbered list" aria-pressed="false" title="numbered list">1.</button>
+        <button type="button" data-cmd="task" aria-label="Task list" aria-pressed="false" title="task list">☑</button>
+        <button type="button" data-cmd="quote" aria-label="Quote" aria-pressed="false" title="quote">❝</button>
+        <button type="button" data-cmd="codeblock" aria-label="Code block" aria-pressed="false" title="code block">{ }</button>
+        <button type="button" data-cmd="undo" aria-label="Undo" title="undo (Ctrl+Z)">↶</button>
+        <button type="button" data-cmd="redo" aria-label="Redo" title="redo (Ctrl+Shift+Z)">↷</button>
+        <button type="button" data-role="live-toggle" class="live-btn" aria-label="Real-time editing" aria-pressed="false" title="How your edits reach collaborators">⚡ Live: off</button>
+        <button type="button" data-role="commit" class="commit-btn" aria-label="Commit (Ctrl+Enter)" disabled>Commit ⌘↵</button>
       </div>
       <div class="editor-rich" data-role="editor"></div>`;
+    (root.querySelector('.pane-title') as HTMLElement).textContent = title; // textContent: titles are member-supplied
     this.commitBtn = root.querySelector('[data-role=commit]')!;
     this.verEl = root.querySelector('[data-role=ver]')!;
     this.roleBadge = root.querySelector('[data-role=role-badge]')!;
@@ -121,6 +125,25 @@ export class EditorPane {
       else if (cmd === 'undo') c.undo().run();
       else if (cmd === 'redo') c.redo().run();
     });
+    // Roving tabindex: the whole toolbar is one Tab stop; Arrow/Home/End move
+    // within it (fewer Tab presses for keyboard and switch users).
+    const bar = root.querySelector('[data-role=toolbar]') as HTMLElement;
+    const barBtns = () => Array.from(bar.querySelectorAll<HTMLButtonElement>('button'))
+      .filter((b) => !b.disabled && b.style.display !== 'none');
+    bar.querySelectorAll<HTMLButtonElement>('button').forEach((b, i) => { b.tabIndex = i === 0 ? 0 : -1; });
+    bar.addEventListener('focusin', (e) => {
+      bar.querySelectorAll<HTMLButtonElement>('button').forEach((b) => { b.tabIndex = b === e.target ? 0 : -1; });
+    });
+    bar.addEventListener('keydown', (e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      const items = barBtns();
+      const i = items.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0 || !items.length) return;
+      e.preventDefault();
+      (e.key === 'ArrowLeft' ? items[(i - 1 + items.length) % items.length]
+        : e.key === 'ArrowRight' ? items[(i + 1) % items.length]
+        : e.key === 'Home' ? items[0] : items[items.length - 1]).focus();
+    });
     this.commitBtn.addEventListener('click', () => this.commit());
     (root.querySelector('[data-role=live-toggle]') as HTMLElement).addEventListener('click', () => this.hooks.onToggleLive?.());
     this.editor.view.dom.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -153,6 +176,7 @@ export class EditorPane {
   private renderDirty() {
     this.commitBtn.disabled = !this.dirty || this.readonly;
     this.commitBtn.textContent = this.dirty ? 'Commit ⌘↵ •' : 'Commit ⌘↵';
+    this.commitBtn.setAttribute('aria-label', this.dirty ? 'Commit — you have uncommitted edits (Ctrl+Enter)' : 'Commit (Ctrl+Enter)');
   }
   isDirty() { return this.dirty; }
 
@@ -172,8 +196,13 @@ export class EditorPane {
       ['quote', () => this.editor.isActive('blockquote')],
       ['codeblock', () => this.editor.isActive('codeBlock')],
     ];
-    for (const [cmd, active] of map)
-      this.root.querySelector(`[data-cmd=${cmd}]`)?.classList.toggle('is-active', active());
+    for (const [cmd, active] of map) {
+      const btn = this.root.querySelector(`[data-cmd=${cmd}]`);
+      if (!btn) continue;
+      const on = active();
+      btn.classList.toggle('is-active', on);
+      btn.setAttribute('aria-pressed', String(on)); // the state the .is-active color conveys, for screen readers
+    }
   }
 
   setVersion(v: number) { this.verEl.textContent = 'v' + v; }
@@ -186,6 +215,8 @@ export class EditorPane {
     this.commitBtn.style.display = ro || this.live ? 'none' : '';
     (this.root.querySelector('[data-role=live-toggle]') as HTMLElement).style.display = ro ? 'none' : '';
     (this.root.querySelector('[data-role=toolbar]') as HTMLElement).classList.toggle('readonly', ro);
+    // pointer-events:none only blocks the mouse — actually disable for keyboards too
+    this.root.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => { b.disabled = ro; });
     this.roleBadge.textContent = ro ? 'viewer' : 'editor';
     this.roleBadge.classList.toggle('viewer', ro);
     this.root.classList.toggle('readonly', ro);
@@ -196,6 +227,7 @@ export class EditorPane {
     this.live = live;
     const btn = this.root.querySelector('[data-role=live-toggle]') as HTMLElement;
     btn.textContent = '⚡ Live: ' + (live ? 'on' : 'off');
+    btn.setAttribute('aria-pressed', String(live));
     btn.classList.toggle('on', live);
     this.commitBtn.style.display = live || this.readonly ? 'none' : '';
     this.setNote(live ? 'real-time — edits sync as you type' : '');
